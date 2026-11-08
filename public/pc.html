@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iOS → PC Transfer</title>
+<style>
+  :root { --bg:#f5f5f7; --card:#fff; --text:#1d1d1f; --muted:#6e6e73; --accent:#0071e3; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --card:#1c1c1e; --text:#f5f5f7; --muted:#a1a1a6; --accent:#0a84ff; } }
+  body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; justify-content:center; padding:40px 16px; }
+  main { width:100%; max-width:760px; display:grid; grid-template-columns:340px 1fr; gap:24px; }
+  @media (max-width:720px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border-radius:16px; padding:20px; }
+  h1 { font-size:22px; margin:0 0 6px; } h2 { font-size:16px; margin:0 0 12px; }
+  .muted { color:var(--muted); font-size:14px; }
+  #qr { width:100%; border-radius:8px; background:#fff; margin:14px 0; }
+  code { font-size:12px; word-break:break-all; }
+  button { margin-top:12px; padding:10px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; font-size:14px; cursor:pointer; }
+  ul { list-style:none; padding:0; margin:0; max-height:480px; overflow:auto; }
+  li { display:flex; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid rgba(127,127,127,.15); font-size:14px; }
+  li span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>iOS → PC Transfer</h1>
+    <div class="muted">Escanea con la cámara del iPhone. Ambos deben estar en la misma red Wi-Fi.</div>
+    <img id="qr" alt="Código QR">
+    <code id="url"></code>
+  </section>
+  <section class="card">
+    <h2>Recibidos (<span id="count">0</span>)</h2>
+    <div class="muted" id="dest"></div>
+    <button id="open">Abrir carpeta</button>
+    <ul id="list" style="margin-top:16px"></ul>
+  </section>
+</main>
+<script>
+function fmt(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    if (!document.getElementById('qr').src) {
+      document.getElementById('qr').src = s.qr;
+      document.getElementById('url').textContent = s.uploadUrl;
+      document.getElementById('dest').textContent = 'Guardando en: ' + s.dest;
+    }
+    document.getElementById('count').textContent = s.received.length;
+    const ul = document.getElementById('list');
+    ul.replaceChildren(...s.received.map((r) => {
+      const li = document.createElement('li');
+      const a = document.createElement('span'); a.textContent = r.name;
+      const b = document.createElement('span'); b.className = 'muted'; b.textContent = fmt(r.size);
+      li.append(a, b); return li;
+    }));
+  } catch {}
+}
+document.getElementById('open').onclick = () => fetch('/api/open-folder', { method: 'POST' });
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

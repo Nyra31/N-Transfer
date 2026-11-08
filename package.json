@@ -1,0 +1,19 @@
+{
+    "name":  "ios-to-pc-transfer",
+    "version":  "1.0.0",
+    "description":  "Pasa fotos, videos y archivos del iPhone a Windows por Wi-Fi",
+    "main":  "server.js",
+    "scripts":  {
+                    "start":  "node server.js"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "type":  "commonjs",
+    "dependencies":  {
+                         "busboy":  "^1.6.0",
+                         "qrcode":  "^1.5.4"
+                     }
+}
