@@ -91,7 +91,8 @@
       {
         "provider": "github",
         "owner": "Nyra31",
-        "repo": "N-Transfer"
+        "repo": "N-Transfer",
+        "releaseType": "release"
       }
     ]
   }
