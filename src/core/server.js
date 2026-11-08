@@ -35,6 +35,9 @@ const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const WIN_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
 const MAX_HISTORY = 300;
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const MAX_PAIR_FAILURES = 10;
+const normalizeCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 function json(res, status, body, extra = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extra });
@@ -106,10 +109,17 @@ class TransferServer extends EventEmitter {
   pairUrl() {
     return `http://${this.ip}:${this.port}/pair?c=${this.pairCode}`;
   }
+  /** Código de 8 caracteres sin ambigüedades (sin 0/O, 1/I/L), fácil de escribir a mano. */
   newPairCode() {
-    this.pairCode = crypto.randomBytes(5).toString('hex');
+    const bytes = crypto.randomBytes(8);
+    this.pairCode = Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+    this.pairFailures = 0;
     this.emit('pair-code', this.pairCode);
     return this.pairCode;
+  }
+  /** El código tal y como se muestra: K7QM-2XPA */
+  get pairCodeDisplay() {
+    return this.pairCode.slice(0, 4) + '-' + this.pairCode.slice(4);
   }
   devices() {
     return (this.store.get('devices') || []).map(publicDevice);
@@ -260,7 +270,9 @@ class TransferServer extends EventEmitter {
     if (p === '/api/v1/pair' && req.method === 'POST') {
       cors(res);
       const body = await readJson(req);
-      if (!body || typeof body.code !== 'string' || body.code !== this.pairCode) {
+      if (!body || normalizeCode(body.code) !== this.pairCode) {
+        // Contra fuerza bruta: tras varios intentos fallidos el código se renueva.
+        if (++this.pairFailures >= MAX_PAIR_FAILURES) this.newPairCode();
         return json(res, 403, { error: 'bad_code' });
       }
       const { token, device } = this.pairDevice(body.name, body.platform);
@@ -288,7 +300,7 @@ class TransferServer extends EventEmitter {
     }
 
     if (p === '/manifest.webmanifest') return this.manifest(res, url.searchParams.get('d'));
-    if (p === '/' || p === '/pair' || p === '/index.html') return this.serveStatic(res, this.mobileDir, 'index.html');
+    if (p === '/' || p === '/pair' || p === '/index.html') return this.serveIndex(res, url.searchParams.get('d'));
     if (p.startsWith('/m/')) return this.serveStatic(res, this.mobileDir, p.slice(3));
     if (p.startsWith('/shared/')) return this.serveStatic(res, this.sharedDir, p.slice(8));
     if (p === '/favicon.ico') return this.serveStatic(res, this.mobileDir, 'icons/icon-192.png');
@@ -302,6 +314,19 @@ class TransferServer extends EventEmitter {
     if (!st || !st.isFile()) return json(res, 404, { error: 'not_found' });
     res.writeHead(200, { 'Content-Type': mimeOf(file), 'Content-Length': st.size, 'Cache-Control': 'no-cache' });
     fs.createReadStream(file).pipe(res);
+  }
+
+  /**
+   * La página del móvil, con el enlace al manifest ya escrito en el HTML. Safari lee el manifest al
+   * cargar y no vuelve a leerlo si se cambia con JavaScript; por eso el token tiene que estar desde el principio.
+   */
+  async serveIndex(res, token) {
+    let html = await fsp.readFile(path.join(this.mobileDir, 'index.html'), 'utf8');
+    if (token && TOKEN_RE.test(token)) {
+      html = html.replace('href="/manifest.webmanifest"', `href="/manifest.webmanifest?d=${token}"`);
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(html);
   }
 
   /** Manifest por dispositivo: start_url lleva el token, así el icono de inicio funciona siempre. */

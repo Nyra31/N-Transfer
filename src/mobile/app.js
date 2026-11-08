@@ -245,22 +245,22 @@
     return isAndroid ? 'Android' : lang === 'es' ? 'Móvil' : 'Phone';
   }
 
-  async function doPair() {
-    $('btnPair').disabled = true;
-    $('pairMsg').textContent = t('mPairing');
+  async function doPair(code, name, btn, msg, errorKey) {
+    btn.disabled = true;
+    msg.textContent = t('mPairing');
     try {
       const r = await fetch('/api/v1/pair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: pairCode, name: $('devName').value || guessName(), platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
+        body: JSON.stringify({ code, name, platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
       });
       if (!r.ok) throw new Error('bad_code');
       token = (await r.json()).token;
       LS.set('nt-token', token);
       await goHome();
     } catch {
-      $('pairMsg').textContent = t('mPairError');
-      $('btnPair').disabled = false;
+      msg.textContent = t(errorKey);
+      btn.disabled = false;
     }
   }
 
@@ -293,8 +293,12 @@
     me = await r.json();
     if (await tryLocalHost(me)) return;
     LS.set('nt-token', token);
-    history.replaceState(null, '', '/?d=' + encodeURIComponent(token));
-    $('manifest').href = '/manifest.webmanifest?d=' + encodeURIComponent(token);
+    // El token tiene que estar en la URL *al cargar* la página: así el servidor escribe el manifest con él
+    // y el icono de la pantalla de inicio (que no comparte almacenamiento con Safari) arranca emparejado.
+    if (q.get('d') !== token) {
+      location.replace('/?d=' + encodeURIComponent(token));
+      return;
+    }
     if (!LS.get('nt-skin') && !q.get('skin')) { skin = me.skin; applySkin(); }
     if (!LS.get('nt-lang')) { lang = me.lang; t = translator(lang); applyI18n(); }
     $('pcInfo').textContent = `${me.pcName} · ${me.host}:${me.port} · v${me.version}`;
@@ -334,7 +338,16 @@
     LS.set('nt-hint-hidden', '1');
     $('installHint').hidden = true;
   };
-  $('btnPair').onclick = doPair;
+  $('btnPair').onclick = () =>
+    doPair(pairCode, $('devName').value || guessName(), $('btnPair'), $('pairMsg'), 'mPairError');
+  $('btnCode').onclick = () =>
+    doPair($('codeInput').value, guessName(), $('btnCode'), $('codeMsg'), 'mCodeError');
+  $('codeInput').addEventListener('input', (e) => {
+    // Formato XXXX-XXXX mientras se escribe
+    const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    e.target.value = v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4) : v;
+  });
+  $('codeInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('btnCode').click());
 
   // ───────────── arranque ─────────────
   applySkin();

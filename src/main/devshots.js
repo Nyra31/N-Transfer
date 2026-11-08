@@ -80,6 +80,39 @@ module.exports = async function devshots({ app, win, server, store, send }) {
     await wait(600);
     fs.writeFileSync(path.join(out, 'pc-pair.png'), (await win.webContents.capturePage()).toPNG());
 
+    // ── Flujo «añadir a pantalla de inicio» ──
+    // 1) Emparejar desde la página del QR (sesión limpia, como Safari)
+    const safari = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-safari' } });
+    await safari.loadURL(`http://127.0.0.1:${port}/pair?c=${server.pairCode}`);
+    await wait(500);
+    await safari.webContents.executeJavaScript(`document.getElementById('btnPair').click()`);
+    await wait(2500);
+    const after = await safari.webContents.executeJavaScript(
+      `({ url: location.href, manifest: document.getElementById('manifest').getAttribute('href'),
+          view: ['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden) })`);
+    report.push(`after pairing: view=${after.view} url-has-token=${/[?&]d=/.test(after.url)} manifest=${after.manifest.replace(/d=.*/, 'd=<token>')}`);
+    const newToken = new URL(after.url).searchParams.get('d');
+    const man = await (await fetch(`http://127.0.0.1:${port}${after.manifest}`)).json();
+    report.push(`manifest start_url has token: ${man.start_url === '/?d=' + newToken}`);
+    // 2) La app de inicio arranca en «/» sin almacenamiento: debe ofrecer escribir el código
+    const homeApp = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-home' } });
+    await homeApp.loadURL(`http://127.0.0.1:${port}/`);
+    await wait(800);
+    fs.writeFileSync(path.join(out, 'mobile-code.png'), (await homeApp.webContents.capturePage()).toPNG());
+    const typed = server.pairCodeDisplay.toLowerCase(); // minúsculas y con guion: debe aceptarse igual
+    await homeApp.webContents.executeJavaScript(`(() => { const i = document.getElementById('codeInput');
+      i.value = ${JSON.stringify(typed)}; i.dispatchEvent(new Event('input')); document.getElementById('btnCode').click(); })()`);
+    await wait(2500);
+    const viaCode = await homeApp.webContents.executeJavaScript(
+      `({ url: location.href, view: ['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden) })`);
+    report.push(`pair by typed code: view=${viaCode.view} url-has-token=${/[?&]d=/.test(viaCode.url)}`);
+    // 3) Código incorrecto
+    const wrong = await fetch(`http://127.0.0.1:${port}/api/v1/pair`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'AAAA-AAAA', name: 'x' }),
+    });
+    report.push(`wrong code: ${wrong.status}`);
+    report.push(`devices: ${server.devices().map((d) => d.name).join(', ')}`);
+
     const r = await slow;
     report.push(`slow upload: ${r.status} ${r.data}`);
     report.push('files: ' + fs.readdirSync(path.join(out, 'received')).join(', '));

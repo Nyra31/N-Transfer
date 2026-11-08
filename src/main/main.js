@@ -247,7 +247,7 @@ function notifyBatch() {
 async function pairInfo() {
   const url = server.pairUrl();
   const qr = await QRCode.toDataURL(url, { margin: 2, width: 360, errorCorrectionLevel: 'M' });
-  return { url, qr, ip: server.ip, host: server.mdnsHost, port: server.port };
+  return { url, qr, code: server.pairCodeDisplay, ip: server.ip, host: server.mdnsHost, port: server.port };
 }
 
 function settings() {

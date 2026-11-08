@@ -40,6 +40,8 @@ body {
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .field .nt-input { font-size: 17px; padding: 10px; }
 .msg { color: var(--text-dim); font-size: 13px; }
+.msg:empty { display: none; }
+.code-input { font-family: var(--font-lcd); font-size: 24px !important; letter-spacing: 4px; text-align: center; text-transform: uppercase; }
 
 .nt-btn.big { min-height: 54px; font-size: 16px; font-weight: bold; width: 100%; padding: 10px 14px; }
 .nt-btn.big .ico { font-size: 14px; }

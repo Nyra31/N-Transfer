@@ -198,6 +198,7 @@ function scheduleList() {
 function openPair() {
   $('qr').src = S.pair.qr;
   $('pairUrl').textContent = S.pair.url;
+  $('pairCode').textContent = S.pair.code;
   $('pairDlg').hidden = false;
 }
 function openSettings(section) {

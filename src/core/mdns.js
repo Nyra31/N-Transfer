@@ -6,8 +6,12 @@ let bonjour = null;
 function advertise({ name, port, version }) {
   try {
     const { Bonjour } = require('bonjour-service');
-    bonjour = new Bonjour();
-    bonjour.publish({ name: `N-Transfer (${name})`, type: 'ntransfer', port, txt: { api: '1', version } });
+    bonjour = new Bonjour({}, (err) => console.warn('[mdns]', err.message));
+    const service = bonjour.publish({
+      name: `N-Transfer (${name})`, type: 'ntransfer', port, txt: { api: '1', version }, probe: true,
+    });
+    // Si el nombre ya existe en la red (p. ej. dos copias abiertas) no debe tumbar la app.
+    service.on('error', (err) => console.warn('[mdns]', err.message));
   } catch (e) {
     console.warn('[mdns] no disponible:', e.message);
   }
