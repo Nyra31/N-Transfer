@@ -197,6 +197,7 @@ function quit() {
 
 app.on('before-quit', () => {
   quitting = true;
+  clearTimeout(batch.timer);
   mdns.stop();
   store?.flush();
 });
@@ -231,6 +232,7 @@ function notifyBatch() {
   batch.count++;
   clearTimeout(batch.timer);
   batch.timer = setTimeout(() => {
+    if (quitting || !win || win.isDestroyed()) return;
     if ((!win.isVisible() || win.isMinimized()) && Notification.isSupported()) {
       const n = new Notification({
         title: t('notifyReceived', { n: batch.count }),

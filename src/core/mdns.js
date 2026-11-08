@@ -19,12 +19,20 @@ function advertise({ name, port, version }) {
 
 function stop() {
   if (!bonjour) return;
+  // Referencia local: el callback llega después de que la variable global se haya limpiado.
+  const instance = bonjour;
+  bonjour = null;
   try {
-    bonjour.unpublishAll(() => bonjour.destroy());
+    instance.unpublishAll(() => {
+      try {
+        instance.destroy();
+      } catch {
+        /* el socket ya puede estar cerrado al salir */
+      }
+    });
   } catch {
     /* ignorar */
   }
-  bonjour = null;
 }
 
 module.exports = { advertise, stop };
