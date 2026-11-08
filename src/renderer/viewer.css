@@ -1,0 +1,32 @@
+html, body { margin: 0; height: 100%; overflow: hidden; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--frame-bg); font-size: 12px; user-select: none; }
+#app {
+  height: 100vh; display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px;
+  background: var(--frame-bg); border: 1px solid var(--frame-lo); box-shadow: inset 1px 1px 0 var(--frame-hi);
+}
+.v-title { -webkit-app-region: drag; flex-shrink: 0; border-radius: 0 !important; }
+.v-title button { -webkit-app-region: no-drag; }
+.v-name { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 1px; }
+.stage { position: relative; flex: 1; min-height: 0; margin: 0 6px; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.stage img, .stage video { max-width: 100%; max-height: 100%; object-fit: contain; }
+.nav { position: absolute; top: 50%; transform: translateY(-50%); width: 34px; height: 54px; opacity: .25; transition: opacity .15s; }
+.stage:hover .nav { opacity: .9; }
+.prev { left: 8px; }
+.next { right: 8px; }
+.no-play { max-width: 360px; padding: 16px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.no-play > * { position: relative; z-index: 1; }
+.no-play img { max-width: 220px; max-height: 160px; }
+.no-play p { margin: 0; line-height: 1.5; }
+.loading { color: #888; font-size: 30px; }
+.v-bar { display: flex; gap: 6px; padding: 0 6px; align-items: stretch; }
+.v-info { flex: 1; min-width: 0; padding: 5px 10px; display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.v-info span { position: relative; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strip { margin: 0 6px; height: 62px; display: flex; gap: 4px; padding: 4px; overflow-x: auto; overflow-y: hidden; background: var(--list-bg); flex-shrink: 0; }
+.strip button {
+  flex: 0 0 52px; height: 52px; padding: 0; border: 2px solid transparent; background: rgba(127,127,127,.15);
+  cursor: pointer; color: var(--list-fg); font-size: 16px; overflow: hidden;
+}
+.strip button img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.strip button.current { border-color: var(--list-sel-bg); }

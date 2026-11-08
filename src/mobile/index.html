@@ -35,19 +35,22 @@
   </header>
 
   <div class="nt-lcd m-lcd">
-    <div class="lcd-row">
-      <span><span class="led" id="led">●</span> <span id="lcdStatus">…</span></span>
-      <span class="lcd-speed"><span id="lcdSpeed">0.0</span><small class="dim"> MB/s</small></span>
-    </div>
-    <div class="marquee" id="marquee"></div>
-    <div class="lcd-row bottom">
-      <canvas id="viz" width="150" height="26"></canvas>
-      <span class="lcd-small" id="lcdSmall"></span>
+    <div class="lcd-thumb" id="lcdThumb"><img id="lcdImg" alt=""><span class="lcd-glyph" id="lcdGlyph">N</span></div>
+    <div class="lcd-main">
+      <div class="lcd-row">
+        <span><span class="led" id="led">●</span> <span id="lcdStatus">…</span></span>
+        <span class="lcd-speed"><span id="lcdSpeed">0.0</span><small class="dim"> MB/s</small></span>
+      </div>
+      <div class="marquee" id="marquee"></div>
+      <div class="lcd-row bottom">
+        <canvas id="viz" width="110" height="24"></canvas>
+        <span class="lcd-small" id="lcdSmall"></span>
+      </div>
     </div>
   </div>
   <div class="nt-progress m-seek"><i id="seek"></i></div>
 
-  <!-- Emparejar -->
+  <!-- Emparejar (desde el QR) -->
   <section class="view" id="viewPair" hidden>
     <div class="panel nt-inset">
       <h2 data-i18n="mPairTitle"></h2>
@@ -58,7 +61,7 @@
     </div>
   </section>
 
-  <!-- Sin emparejar -->
+  <!-- Sin emparejar: escribir el código -->
   <section class="view" id="viewNone" hidden>
     <div class="panel nt-inset">
       <h2 data-i18n="mNotPairedTitle"></h2>
@@ -79,20 +82,36 @@
     </div>
 
     <div class="send-btns">
-      <label class="nt-btn big"><span class="ico">▲</span><span data-i18n="mPhotos"></span>
+      <label class="nt-btn big"><span class="ico">▣</span><span data-i18n="mPhotos"></span>
         <input id="pickMedia" type="file" accept="image/*,video/*" multiple></label>
-      <label class="nt-btn big"><span class="ico">▲</span><span data-i18n="mFiles"></span>
+      <label class="nt-btn big"><span class="ico">■</span><span data-i18n="mFiles"></span>
         <input id="pickFiles" type="file" multiple></label>
+      <button class="nt-btn big" id="btnText"><span class="ico">✉</span><span data-i18n="mText"></span></button>
     </div>
     <p class="keep-open" id="keepOpen" hidden data-i18n="mKeepOpen"></p>
+
+    <div class="section-title" id="queueTitle" hidden><span data-i18n="mQueue"></span> <span id="queueSummary"></span></div>
+    <ul class="nt-list nt-inset m-list" id="queue"></ul>
 
     <div class="section-title"><span data-i18n="mFromPc"></span> <span id="countFromPc"></span></div>
     <ul class="nt-list nt-inset m-list" id="fromPc"></ul>
     <p class="empty" id="emptyFromPc" data-i18n="mEmptyFromPc"></p>
-
-    <div class="section-title" id="queueTitle" hidden><span data-i18n="mQueue"></span> <span id="queueSummary"></span></div>
-    <ul class="nt-list nt-inset m-list" id="queue"></ul>
   </section>
+</div>
+
+<!-- Enviar texto -->
+<div class="sheet" id="textSheet" hidden>
+  <div class="sheet-inner">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="mSendText"></span><span class="stripes"></span></header>
+    <div class="sheet-body">
+      <textarea class="nt-input m-text" id="textInput" rows="5" data-i18n-placeholder="mTextPlaceholder"></textarea>
+      <p class="msg" id="textMsg"></p>
+      <div class="two">
+        <button class="nt-btn big" id="btnTextCancel"><span data-i18n="mClose"></span></button>
+        <button class="nt-btn big" id="btnTextSend"><span data-i18n="mSend"></span></button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Menú -->
@@ -102,11 +121,7 @@
     <div class="sheet-body">
       <fieldset class="nt-fieldset">
         <legend data-i18n="skin"></legend>
-        <div class="skin-row" id="skinRow">
-          <button class="nt-btn" data-skin="winamp" data-i18n="skinWinamp"></button>
-          <button class="nt-btn" data-skin="chrome" data-i18n="skinChrome"></button>
-          <button class="nt-btn" data-skin="luna" data-i18n="skinLuna"></button>
-        </div>
+        <div class="skin-row" id="skinRow"></div>
       </fieldset>
       <fieldset class="nt-fieldset">
         <legend data-i18n="language"></legend>

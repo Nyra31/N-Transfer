@@ -3,14 +3,25 @@
  * Servidor de N-Transfer. No depende de Electron: puede ejecutarse en Windows, macOS y Linux.
  *
  * API v1 (estable, la usarán también las futuras apps nativas de iOS/Android):
- *   GET  /api/v1/info                 público, CORS: datos del PC
- *   POST /api/v1/pair   {code,name,platform} → {token, deviceId}
- *   GET  /api/v1/me                   (auth) dispositivo + skin/idioma del PC
- *   PUT  /api/v1/upload               (auth) cuerpo = bytes del archivo;
- *                                     cabeceras X-File-Name (URI-encoded), X-File-Mtime (ms)
- *   GET  /api/v1/outbox               (auth) archivos que el PC ofrece al móvil
- *   GET  /api/v1/outbox/:id           (auth) descarga (admite Range)
- *   GET  /api/v1/events               (auth) Server-Sent Events: outbox, settings, unpaired
+ *   GET    /api/v1/info                     público, CORS: datos del PC
+ *   POST   /api/v1/pair     {code,name,platform} → {token, deviceId}
+ *   GET    /api/v1/me                       dispositivo, skin, idioma y skins disponibles
+ *
+ *   Subidas reanudables (móvil → PC):
+ *   POST   /api/v1/uploads  {name,size,mtime,type,thumb?} → {id, offset, name}
+ *          Si ya existe una subida a medias del mismo archivo (nombre+tamaño+fecha), se reanuda.
+ *   PUT    /api/v1/uploads/:id?offset=N     cuerpo = bytes desde N → {done, offset}
+ *          409 {offset} si N no coincide · 423 si el PC la ha pausado · 410 si se canceló
+ *   GET    /api/v1/uploads/:id              → {offset, size, state}
+ *   POST   /api/v1/uploads/:id/state {state: paused|active}
+ *   DELETE /api/v1/uploads/:id              cancelar
+ *   PUT    /api/v1/upload                   subida simple de una vez (cabeceras X-File-Name, X-File-Mtime)
+ *
+ *   POST   /api/v1/text     {text}          enviar texto o un enlace al PC
+ *   GET    /api/v1/outbox                   lo que el PC ofrece: archivos y textos
+ *   GET    /api/v1/outbox/:id               descarga (admite Range)
+ *   GET    /api/v1/outbox/:id/thumb         miniatura JPG
+ *   GET    /api/v1/events                   SSE: outbox, settings, control {id, action}, unpaired
  * Autenticación: cabecera X-Device-Token o parámetro ?d=<token>.
  */
 const http = require('http');
@@ -19,9 +30,11 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { once, EventEmitter } = require('events');
 const { pipeline } = require('stream/promises');
-const { EventEmitter } = require('events');
 const { getLanIPs, getMdnsHost } = require('./net');
+const { kindOf, isHeic } = require('./kinds');
+const { convertHeic } = require('./heic');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -33,13 +46,19 @@ const MIME = {
 const mimeOf = (p) => MIME[path.extname(p).toLowerCase()] || 'application/octet-stream';
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const WIN_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
 const MAX_HISTORY = 300;
+const MAX_TEXT = 64 * 1024;
+const MAX_THUMB = 300 * 1024;
+const STALE_UPLOAD_MS = 48 * 3600 * 1000;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const MAX_PAIR_FAILURES = 10;
 const normalizeCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const TYPE_FOLDERS = { es: { photo: 'Fotos', video: 'Vídeos', other: 'Otros' }, en: { photo: 'Photos', video: 'Videos', other: 'Other' } };
 
 function json(res, status, body, extra = {}) {
+  if (res.headersSent || res.destroyed) return;
   res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extra });
   res.end(JSON.stringify(body));
 }
@@ -47,14 +66,14 @@ function json(res, status, body, extra = {}) {
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Device-Token, X-File-Name, X-File-Mtime');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 }
 
 async function readJson(req, limit = 16 * 1024) {
   let data = '';
   for await (const chunk of req) {
     data += chunk;
-    if (data.length > limit) throw new Error('body_too_large');
+    if (data.length > limit) throw Object.assign(new Error('body_too_large'), { status: 413 });
   }
   try {
     return JSON.parse(data || '{}');
@@ -78,24 +97,42 @@ function publicDevice(d) {
   return { id: d.id, name: d.name, platform: d.platform, pairedAt: d.pairedAt, lastSeen: d.lastSeen };
 }
 
+function emptyStats() {
+  return {
+    since: Date.now(), bytesIn: 0, bytesOut: 0, filesIn: 0, filesOut: 0,
+    photos: 0, videos: 0, others: 0, texts: 0, maxSpeed: 0,
+  };
+}
+
 class TransferServer extends EventEmitter {
   /**
    * @param {object} o
-   * @param {import('./store').Store} o.store  claves: port, destDir, skin, lang, devices, outbox, history
-   * @param {string} o.mobileDir  carpeta con la web app del móvil
-   * @param {string} o.sharedDir  carpeta con skins e idiomas compartidos
+   * @param {import('./store').Store} o.store
+   * @param {string} o.mobileDir   web app del móvil
+   * @param {string} o.sharedDir   skins e idiomas compartidos
+   * @param {string} o.thumbsDir   miniaturas (JPG) de lo transferido
    * @param {string} o.version
+   * @param {() => {id:string,name:string,file:string}[]} [o.customSkins]
+   * @param {(file:string, out:string) => Promise<boolean>} [o.thumbnailer]  miniaturas de archivos del PC
    */
-  constructor({ store, mobileDir, sharedDir, version }) {
+  constructor({ store, mobileDir, sharedDir, thumbsDir, version, customSkins, thumbnailer }) {
     super();
     this.store = store;
     this.mobileDir = mobileDir;
     this.sharedDir = sharedDir;
+    this.thumbsDir = thumbsDir;
     this.version = version;
+    this.customSkins = customSkins || (() => []);
+    this.thumbnailer = thumbnailer || null;
     this.port = store.get('port');
     this.clients = new Set();
     this.reserved = new Set();
+    this.sessions = new Map(); // subidas en curso o a medias
+    this.uploadReqs = new Map(); // id → petición HTTP activa
+    this.downloads = new Map(); // id → respuesta HTTP activa (PC → móvil)
     this.http = null;
+    if (!store.get('stats')) store.set('stats', emptyStats());
+    fs.mkdirSync(thumbsDir, { recursive: true });
     this.newPairCode();
   }
 
@@ -125,18 +162,55 @@ class TransferServer extends EventEmitter {
     return (this.store.get('devices') || []).map(publicDevice);
   }
   outbox() {
-    return (this.store.get('outbox') || []).map(({ id, name, size, addedAt }) => ({ id, name, size, addedAt }));
+    return (this.store.get('outbox') || []).map((i) => (i.type === 'text'
+      ? { id: i.id, type: 'text', text: i.text, addedAt: i.addedAt }
+      : { id: i.id, type: 'file', name: i.name, size: i.size, kind: i.kind, thumb: i.thumb || null, addedAt: i.addedAt }));
   }
   history() {
     return this.store.get('history') || [];
   }
+  stats() {
+    return this.store.get('stats');
+  }
+  /** Transferencias en curso, para la interfaz del PC. */
+  activeTransfers() {
+    return [...this.sessions.values()].map((s) => this.sessionInfo(s));
+  }
+  sessionInfo(s) {
+    return {
+      id: s.id, direction: 'in', name: s.name, size: s.size, received: s.received, device: s.device,
+      kind: s.kind, thumb: s.thumb, state: s.state, startedAt: s.startedAt,
+    };
+  }
+  thumbPath(name) {
+    return name ? path.join(this.thumbsDir, path.basename(name)) : null;
+  }
+  skinsList() {
+    const builtIn = ['winamp', 'chrome', 'luna'].map((id) => ({ id, custom: false }));
+    return [...builtIn, ...this.customSkins().map(({ id, name }) => ({ id, name, custom: true }))];
+  }
+
+  /** Carpeta de destino según el tipo (si está activado «Carpetas por tipo»). */
+  dirFor(kind) {
+    const base = this.store.get('destDir');
+    if (!this.store.get('splitByType')) return base;
+    const custom = this.store.get(kind + 'Dir');
+    if (custom) return custom;
+    const names = TYPE_FOLDERS[this.store.get('lang')] || TYPE_FOLDERS.en;
+    return path.join(base, names[kind]);
+  }
+  defaultTypeDir(kind) {
+    const names = TYPE_FOLDERS[this.store.get('lang')] || TYPE_FOLDERS.en;
+    return path.join(this.store.get('destDir'), names[kind]);
+  }
 
   // ───────────── ciclo de vida ─────────────
-  start() {
-    return new Promise((resolve, reject) => {
+  async start() {
+    await this.restoreSessions();
+    await new Promise((resolve, reject) => {
       this.http = http.createServer((req, res) => {
         this.handle(req, res).catch((e) => {
-          if (!res.headersSent) json(res, 500, { error: e.message });
+          if (!res.headersSent) json(res, e.status || 500, { error: e.message });
           else res.destroy();
         });
       });
@@ -153,7 +227,28 @@ class TransferServer extends EventEmitter {
     clearInterval(this.keepAlive);
     for (const c of this.clients) c.res.end();
     this.clients.clear();
+    this.persistSessions();
     return new Promise((r) => (this.http ? this.http.close(() => r()) : r()));
+  }
+
+  /** Recupera las subidas a medias de la última vez (el tamaño real del .ntpart manda). */
+  async restoreSessions() {
+    for (const s of this.store.get('uploads') || []) {
+      const st = await fsp.stat(s.partPath).catch(() => null);
+      if (!st || Date.now() - (s.updatedAt || 0) > STALE_UPLOAD_MS) {
+        await fsp.unlink(s.partPath).catch(() => {});
+        continue;
+      }
+      s.received = Math.min(st.size, s.size);
+      if (s.state !== 'paused') s.state = 'stalled';
+      this.sessions.set(s.id, s);
+      this.reserved.add(s.finalPath.toLowerCase());
+    }
+    this.persistSessions();
+  }
+
+  persistSessions() {
+    this.store.set('uploads', [...this.sessions.values()]);
   }
 
   // ───────────── dispositivos ─────────────
@@ -176,6 +271,7 @@ class TransferServer extends EventEmitter {
 
   forgetDevice(id) {
     this.store.set('devices', (this.store.get('devices') || []).filter((d) => d.id !== id));
+    for (const s of [...this.sessions.values()]) if (s.deviceId === id) this.cancelUpload(s.id);
     for (const c of this.clients) {
       if (c.deviceId === id) {
         this.sendEvent(c, 'unpaired', {});
@@ -200,24 +296,49 @@ class TransferServer extends EventEmitter {
   // ───────────── PC → móvil ─────────────
   async addToOutbox(paths) {
     const items = [...(this.store.get('outbox') || [])];
+    const added = [];
     for (const p of paths) {
       const st = await fsp.stat(p).catch(() => null);
       if (!st || !st.isFile()) continue;
       if (items.some((i) => i.path === p)) continue;
-      items.unshift({ id: crypto.randomUUID(), path: p, name: path.basename(p), size: st.size, addedAt: Date.now() });
+      const item = { id: crypto.randomUUID(), type: 'file', path: p, name: path.basename(p), size: st.size, kind: kindOf(p), addedAt: Date.now() };
+      items.unshift(item);
+      added.push(item);
     }
+    this.store.set('outbox', items);
+    this.outboxChanged();
+    // Miniaturas en segundo plano: la lista aparece al momento y las imágenes después.
+    if (this.thumbnailer) {
+      for (const item of added.filter((i) => i.kind !== 'other')) {
+        const name = `o-${item.id}.jpg`;
+        const ok = await this.thumbnailer(item.path, this.thumbPath(name)).catch(() => false);
+        if (ok) {
+          item.thumb = name;
+          this.store.save();
+          this.outboxChanged();
+        }
+      }
+    }
+  }
+
+  addTextToOutbox(text) {
+    text = String(text || '').slice(0, MAX_TEXT);
+    if (!text.trim()) return;
+    const items = [{ id: crypto.randomUUID(), type: 'text', text, addedAt: Date.now() }, ...(this.store.get('outbox') || [])];
     this.store.set('outbox', items);
     this.outboxChanged();
   }
 
   removeFromOutbox(id) {
-    this.store.set('outbox', (this.store.get('outbox') || []).filter((i) => i.id !== id));
+    const items = this.store.get('outbox') || [];
+    const item = items.find((i) => i.id === id);
+    if (item?.thumb && !this.history().some((h) => h.thumb === item.thumb)) fsp.unlink(this.thumbPath(item.thumb)).catch(() => {});
+    this.store.set('outbox', items.filter((i) => i.id !== id));
     this.outboxChanged();
   }
 
   clearOutbox() {
-    this.store.set('outbox', []);
-    this.outboxChanged();
+    for (const i of [...(this.store.get('outbox') || [])]) this.removeFromOutbox(i.id);
   }
 
   outboxChanged() {
@@ -227,32 +348,60 @@ class TransferServer extends EventEmitter {
   }
 
   settingsChanged() {
-    this.broadcast('settings', { skin: this.store.get('skin'), lang: this.store.get('lang') });
+    this.broadcast('settings', { skin: this.store.get('skin'), lang: this.store.get('lang'), skins: this.skinsList() });
   }
 
   clearHistory() {
+    const keep = new Set((this.store.get('outbox') || []).map((i) => i.thumb).filter(Boolean));
+    for (const h of this.history()) if (h.thumb && !keep.has(h.thumb)) fsp.unlink(this.thumbPath(h.thumb)).catch(() => {});
     this.store.set('history', []);
     this.emit('history-changed', []);
   }
 
   addHistory(entry) {
-    const h = [entry, ...(this.store.get('history') || [])].slice(0, MAX_HISTORY);
-    this.store.set('history', h);
+    const all = [entry, ...(this.store.get('history') || [])];
+    for (const old of all.slice(MAX_HISTORY)) {
+      if (old.thumb) fsp.unlink(this.thumbPath(old.thumb)).catch(() => {});
+    }
+    this.store.set('history', all.slice(0, MAX_HISTORY));
+  }
+
+  resetStats() {
+    this.store.set('stats', emptyStats());
+    this.emit('stats-changed', this.stats());
+  }
+
+  bumpStats(entry, ms) {
+    const s = this.store.get('stats') || emptyStats();
+    if (entry.kind === 'text') s.texts++;
+    else {
+      if (entry.direction === 'in') { s.bytesIn += entry.size; s.filesIn++; } else { s.bytesOut += entry.size; s.filesOut++; }
+      if (entry.kind === 'photo') s.photos++;
+      else if (entry.kind === 'video') s.videos++;
+      else s.others++;
+      // Solo cuenta para el récord si el archivo es lo bastante grande como para medir bien.
+      if (entry.size >= 4 * 1048576 && ms > 0) s.maxSpeed = Math.max(s.maxSpeed, Math.round(entry.size / (ms / 1000)));
+    }
+    this.store.set('stats', s);
+    this.emit('stats-changed', s);
   }
 
   // ───────────── Server-Sent Events ─────────────
   sendEvent(client, event, data) {
     client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
-
   broadcast(event, data) {
     for (const c of this.clients) this.sendEvent(c, event, data);
+  }
+  sendTo(deviceId, event, data) {
+    for (const c of this.clients) if (c.deviceId === deviceId) this.sendEvent(c, event, data);
   }
 
   // ───────────── enrutado ─────────────
   async handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
+    let m;
 
     if (req.method === 'OPTIONS') {
       cors(res);
@@ -276,7 +425,7 @@ class TransferServer extends EventEmitter {
         return json(res, 403, { error: 'bad_code' });
       }
       const { token, device } = this.pairDevice(body.name, body.platform);
-      this.newPairCode(); // cada código QR sirve para un solo dispositivo
+      this.newPairCode(); // cada código sirve para un solo dispositivo
       return json(res, 200, { token, deviceId: device.id });
     }
 
@@ -288,13 +437,38 @@ class TransferServer extends EventEmitter {
       if (p === '/api/v1/me') {
         return json(res, 200, {
           device: publicDevice(dev), pcName: os.hostname(), host: this.mdnsHost, port: this.port,
-          skin: this.store.get('skin'), lang: this.store.get('lang'), version: this.version,
+          skin: this.store.get('skin'), lang: this.store.get('lang'), version: this.version, skins: this.skinsList(),
         });
       }
-      if (p === '/api/v1/upload' && req.method === 'PUT') return this.receive(req, res, dev);
+      if (p === '/api/v1/uploads' && req.method === 'POST') return this.createUpload(req, res, dev);
+      if ((m = p.match(new RegExp(`^/api/v1/uploads/(${UUID})$`)))) {
+        if (req.method === 'PUT') return this.putUpload(req, res, dev, m[1], Number(url.searchParams.get('offset') || 0));
+        if (req.method === 'GET') return this.getUpload(res, dev, m[1]);
+        if (req.method === 'DELETE') {
+          const s = this.sessions.get(m[1]);
+          if (s && s.deviceId === dev.id) this.cancelUpload(s.id, { notify: false });
+          return json(res, 200, { ok: true });
+        }
+      }
+      if ((m = p.match(new RegExp(`^/api/v1/uploads/(${UUID})/state$`))) && req.method === 'POST') {
+        const s = this.sessions.get(m[1]);
+        if (!s || s.deviceId !== dev.id) return json(res, 410, { error: 'gone' });
+        const body = await readJson(req);
+        if (body?.state === 'paused') this.setUploadState(s, 'paused');
+        else if (body?.state === 'active' && s.state === 'paused') this.setUploadState(s, 'stalled');
+        return json(res, 200, { state: s.state });
+      }
+      if (p === '/api/v1/upload' && req.method === 'PUT') return this.simpleUpload(req, res, dev);
+      if (p === '/api/v1/text' && req.method === 'POST') return this.receiveText(req, res, dev);
       if (p === '/api/v1/outbox' && req.method === 'GET') return json(res, 200, { items: this.outbox() });
-      const m = p.match(/^\/api\/v1\/outbox\/([0-9a-f-]{36})$/);
-      if (m && req.method === 'GET') return this.sendOutboxFile(req, res, dev, m[1]);
+      if ((m = p.match(new RegExp(`^/api/v1/outbox/(${UUID})$`))) && req.method === 'GET') {
+        return this.sendOutboxFile(req, res, dev, m[1]);
+      }
+      if ((m = p.match(new RegExp(`^/api/v1/outbox/(${UUID})/thumb$`))) && req.method === 'GET') {
+        const item = (this.store.get('outbox') || []).find((i) => i.id === m[1]);
+        if (!item?.thumb) return json(res, 404, { error: 'not_found' });
+        return this.serveStatic(res, this.thumbsDir, item.thumb);
+      }
       if (p === '/api/v1/events') return this.openEvents(req, res, dev);
       return json(res, 404, { error: 'not_found' });
     }
@@ -303,6 +477,11 @@ class TransferServer extends EventEmitter {
     if (p === '/' || p === '/pair' || p === '/index.html') return this.serveIndex(res, url.searchParams.get('d'));
     if (p.startsWith('/m/')) return this.serveStatic(res, this.mobileDir, p.slice(3));
     if (p.startsWith('/shared/')) return this.serveStatic(res, this.sharedDir, p.slice(8));
+    if ((m = p.match(/^\/skins\/([a-z0-9-]+)\.css$/))) {
+      const skin = this.customSkins().find((s) => s.id === m[1]);
+      if (!skin) return json(res, 404, { error: 'not_found' });
+      return this.serveStatic(res, path.dirname(skin.file), path.basename(skin.file));
+    }
     if (p === '/favicon.ico') return this.serveStatic(res, this.mobileDir, 'icons/icon-192.png');
     return json(res, 404, { error: 'not_found' });
   }
@@ -325,7 +504,11 @@ class TransferServer extends EventEmitter {
     if (token && TOKEN_RE.test(token)) {
       html = html.replace('href="/manifest.webmanifest"', `href="/manifest.webmanifest?d=${token}"`);
     }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+      // Las skins personalizadas son CSS de terceros: que no puedan cargar nada de fuera de la red local.
+      'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://*.local:*; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
+    });
     res.end(html);
   }
 
@@ -369,57 +552,215 @@ class TransferServer extends EventEmitter {
     }
   }
 
-  /** Móvil → PC: el cuerpo de la petición se escribe directamente en disco. */
-  async receive(req, res, dev) {
-    let rawName = '';
-    try {
-      rawName = decodeURIComponent(req.headers['x-file-name'] || '');
-    } catch {
-      rawName = String(req.headers['x-file-name'] || '');
-    }
-    const size = Number(req.headers['content-length']) || 0;
-    const mtime = Number(req.headers['x-file-mtime']) || 0;
-    const dir = this.store.get('destDir');
-    await fsp.mkdir(dir, { recursive: true });
-    const name = await this.uniqueName(dir, sanitizeName(rawName));
-    const finalPath = path.join(dir, name);
-    const partPath = finalPath + '.ntpart';
-    const t = { id: crypto.randomUUID(), direction: 'in', name, size, received: 0, device: dev.name, startedAt: Date.now() };
-    this.emit('transfer-start', { ...t });
+  // ───────────── móvil → PC: subidas reanudables ─────────────
+  async createUpload(req, res, dev) {
+    const body = await readJson(req, MAX_THUMB + 4096);
+    const size = Number(body?.size);
+    if (!body || !Number.isSafeInteger(size) || size < 0) return json(res, 400, { error: 'bad_request' });
+    const s = await this.openSession(dev, {
+      name: body.name, size, mtime: Number(body.mtime) || 0, type: String(body.type || ''), thumb: body.thumb,
+    });
+    return json(res, 200, { id: s.id, offset: s.received, name: s.name });
+  }
 
+  async openSession(dev, { name, size, mtime, type, thumb }) {
+    const clean = sanitizeName(name);
+    const fp = `${clean}|${size}|${mtime}`;
+    // ¿El mismo archivo ya estaba a medias? Se reanuda en vez de empezar de cero.
+    const existing = [...this.sessions.values()].find((x) => x.deviceId === dev.id && x.fp === fp);
+    if (existing) {
+      if (existing.state !== 'paused') this.setUploadState(existing, 'stalled');
+      return existing;
+    }
+    const kind = kindOf(clean, type);
+    const dir = this.dirFor(kind);
+    await fsp.mkdir(dir, { recursive: true });
+    const finalName = await this.uniqueName(dir, clean);
+    const id = crypto.randomUUID();
+    const finalPath = path.join(dir, finalName);
+    let thumbName = null;
+    if (typeof thumb === 'string' && /^data:image\/jpeg;base64,/.test(thumb) && thumb.length < MAX_THUMB) {
+      thumbName = `${id}.jpg`;
+      await fsp.writeFile(this.thumbPath(thumbName), Buffer.from(thumb.split(',')[1], 'base64')).catch(() => (thumbName = null));
+    }
+    const s = {
+      id, deviceId: dev.id, device: dev.name, fp, name: finalName, kind, finalPath, partPath: finalPath + '.ntpart',
+      size, received: 0, mtime, thumb: thumbName, state: 'stalled', startedAt: Date.now(), updatedAt: Date.now(),
+    };
+    this.sessions.set(id, s);
+    this.persistSessions();
+    this.emit('transfer-start', this.sessionInfo(s));
+    return s;
+  }
+
+  getUpload(res, dev, id) {
+    const s = this.sessions.get(id);
+    if (!s || s.deviceId !== dev.id) return json(res, 410, { error: 'gone' });
+    return json(res, 200, { offset: s.received, size: s.size, state: s.state });
+  }
+
+  setUploadState(s, state) {
+    if (s.state === state) return;
+    s.state = state;
+    s.updatedAt = Date.now();
+    this.persistSessions();
+    this.emit('transfer-state', { id: s.id, state });
+  }
+
+  async putUpload(req, res, dev, id, offset) {
+    const s = this.sessions.get(id);
+    if (!s || s.deviceId !== dev.id) return json(res, 410, { error: 'gone' });
+    if (s.state === 'paused') return json(res, 423, { state: 'paused', offset: s.received });
+    if (offset !== s.received) return json(res, 409, { offset: s.received });
+    this.uploadReqs.get(id)?.destroy(); // una conexión antigua que se quedó colgada
+    this.uploadReqs.set(id, req);
+    this.setUploadState(s, 'active');
+    const started = Date.now();
+
+    const out = fs.createWriteStream(s.partPath, { flags: offset === 0 ? 'w' : 'a' });
     let lastEmit = 0;
     req.on('data', (chunk) => {
-      t.received += chunk.length;
+      s.received += chunk.length;
+      if (s.received > s.size) req.destroy(new Error('too_much_data'));
       const now = Date.now();
       if (now - lastEmit > 120) {
         lastEmit = now;
-        this.emit('transfer-progress', { id: t.id, received: t.received, size });
+        this.emit('transfer-progress', { id, received: s.received, size: s.size });
       }
     });
 
     try {
-      await pipeline(req, fs.createWriteStream(partPath));
-      if (size && t.received !== size) throw new Error('incomplete');
-      await fsp.rename(partPath, finalPath);
-      if (mtime > 0 && mtime < Date.now() + 86400000) {
-        await fsp.utimes(finalPath, new Date(), new Date(mtime)).catch(() => {});
+      await pipeline(req, out);
+      this.uploadReqs.delete(id);
+      s.activeMs = (s.activeMs || 0) + (Date.now() - started);
+      if (s.received === s.size) {
+        const entry = await this.finishUpload(s);
+        return json(res, 200, { done: true, name: entry.name, offset: s.size });
       }
-      const entry = { id: t.id, direction: 'in', name, path: finalPath, size: t.received, device: dev.name, at: Date.now() };
-      this.addHistory(entry);
-      this.emit('transfer-done', entry);
-      json(res, 200, { name, size: t.received });
-    } catch (e) {
-      await fsp.unlink(partPath).catch(() => {});
-      this.emit('transfer-error', { id: t.id, error: e.message });
-      if (!res.headersSent && !res.destroyed) json(res, 500, { error: e.message });
-    } finally {
-      this.reserved.delete(finalPath.toLowerCase());
+      s.updatedAt = Date.now();
+      this.setUploadState(s, 'stalled');
+      return json(res, 200, { done: false, offset: s.received });
+    } catch {
+      if (this.uploadReqs.get(id) === req) this.uploadReqs.delete(id);
+      if (!out.closed) await once(out, 'close').catch(() => {});
+      if (!this.sessions.has(id)) return json(res, 410, { error: 'gone' }); // cancelada
+      // Lo que manda es lo que realmente llegó al disco.
+      const st = await fsp.stat(s.partPath).catch(() => null);
+      s.received = st ? Math.min(st.size, s.size) : 0;
+      s.activeMs = (s.activeMs || 0) + (Date.now() - started);
+      if (s.state !== 'paused') this.setUploadState(s, 'stalled');
+      this.emit('transfer-progress', { id, received: s.received, size: s.size });
+      return json(res, s.state === 'paused' ? 423 : 500, { error: 'interrupted', offset: s.received, state: s.state });
     }
   }
 
-  /** PC → móvil. Admite Range para que el móvil pueda reproducir vídeos. */
+  async finishUpload(s) {
+    this.sessions.delete(s.id);
+    this.persistSessions();
+    await fsp.rename(s.partPath, s.finalPath);
+    const mtime = s.mtime > 0 && s.mtime < Date.now() + 86400000 ? new Date(s.mtime) : null;
+    if (mtime) await fsp.utimes(s.finalPath, new Date(), mtime).catch(() => {});
+    const entry = {
+      id: s.id, direction: 'in', kind: s.kind, name: s.name, path: s.finalPath, size: s.size,
+      device: s.device, at: Date.now(), thumb: s.thumb,
+    };
+
+    const mode = this.store.get('heicMode') || 'original';
+    if (s.kind === 'photo' && isHeic(s.finalPath) && mode !== 'original') {
+      this.emit('transfer-state', { id: s.id, state: 'converting' });
+      const dir = path.dirname(s.finalPath);
+      const jpgName = await this.uniqueName(dir, s.name.replace(/\.(heic|heif)$/i, '.jpg'));
+      const jpgPath = path.join(dir, jpgName);
+      try {
+        await convertHeic(s.finalPath, jpgPath);
+        if (mtime) await fsp.utimes(jpgPath, new Date(), mtime).catch(() => {});
+        if (mode === 'jpg') {
+          await fsp.unlink(s.finalPath).catch(() => {});
+          Object.assign(entry, { name: jpgName, path: jpgPath });
+          const st = await fsp.stat(jpgPath).catch(() => null);
+          if (st) entry.size = st.size;
+        } else {
+          entry.extra = { name: jpgName, path: jpgPath };
+        }
+      } catch (e) {
+        entry.convertError = e.message;
+      } finally {
+        this.reserved.delete(jpgPath.toLowerCase());
+      }
+    }
+
+    this.reserved.delete(s.finalPath.toLowerCase());
+    this.addHistory(entry);
+    this.bumpStats(entry, s.activeMs || 0);
+    this.emit('transfer-done', entry);
+    return entry;
+  }
+
+  pauseUpload(id) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    this.setUploadState(s, 'paused');
+    this.uploadReqs.get(id)?.destroy();
+    this.sendTo(s.deviceId, 'control', { id, action: 'pause' });
+  }
+
+  resumeUpload(id) {
+    const s = this.sessions.get(id);
+    if (!s || s.state !== 'paused') return;
+    this.setUploadState(s, 'stalled');
+    this.sendTo(s.deviceId, 'control', { id, action: 'resume' });
+  }
+
+  cancelUpload(id, { notify = true } = {}) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    this.sessions.delete(id);
+    this.persistSessions();
+    this.uploadReqs.get(id)?.destroy();
+    this.uploadReqs.delete(id);
+    fsp.unlink(s.partPath).catch(() => {});
+    if (s.thumb) fsp.unlink(this.thumbPath(s.thumb)).catch(() => {});
+    this.reserved.delete(s.finalPath.toLowerCase());
+    if (notify) this.sendTo(s.deviceId, 'control', { id, action: 'cancel' });
+    this.emit('transfer-cancelled', { id });
+  }
+
+  /** PUT /api/v1/upload: subida de una sola vez (compatibilidad con la primera versión de la API). */
+  async simpleUpload(req, res, dev) {
+    let name = '';
+    try {
+      name = decodeURIComponent(req.headers['x-file-name'] || '');
+    } catch {
+      name = String(req.headers['x-file-name'] || '');
+    }
+    const size = Number(req.headers['content-length']) || 0;
+    const s = await this.openSession(dev, { name, size, mtime: Number(req.headers['x-file-mtime']) || 0, type: '' });
+    if (s.received !== 0) {
+      // Había una subida a medias del mismo archivo: esta API no sabe reanudar, se empieza de cero.
+      s.received = 0;
+    }
+    return this.putUpload(req, res, dev, s.id, 0);
+  }
+
+  // ───────────── texto ─────────────
+  async receiveText(req, res, dev) {
+    const body = await readJson(req, MAX_TEXT * 2);
+    const text = typeof body?.text === 'string' ? body.text.slice(0, MAX_TEXT) : '';
+    if (!text.trim()) return json(res, 400, { error: 'empty' });
+    const entry = {
+      id: crypto.randomUUID(), direction: 'in', kind: 'text', text, name: text.trim().split('\n')[0].slice(0, 120),
+      size: Buffer.byteLength(text), device: dev.name, at: Date.now(),
+    };
+    this.addHistory(entry);
+    this.bumpStats(entry, 0);
+    this.emit('text-received', entry);
+    return json(res, 200, { ok: true });
+  }
+
+  // ───────────── PC → móvil: descargas ─────────────
+  /** Admite Range para que el móvil pueda reproducir vídeos. */
   async sendOutboxFile(req, res, dev, id) {
-    const item = (this.store.get('outbox') || []).find((i) => i.id === id);
+    const item = (this.store.get('outbox') || []).find((i) => i.id === id && i.type !== 'text');
     const st = item && (await fsp.stat(item.path).catch(() => null));
     if (!st) return json(res, 404, { error: 'not_found' });
 
@@ -444,26 +785,46 @@ class TransferServer extends EventEmitter {
     }
 
     res.writeHead(200, { ...headers, 'Content-Length': st.size });
-    const t = { id: crypto.randomUUID(), direction: 'out', name: item.name, size: st.size, received: 0, device: dev.name, startedAt: Date.now() };
-    this.emit('transfer-start', { ...t });
+    const tid = crypto.randomUUID();
+    const kind = kindOf(item.path);
+    const started = Date.now();
+    this.downloads.set(tid, res);
+    this.emit('transfer-start', {
+      id: tid, direction: 'out', name: item.name, size: st.size, received: 0, device: dev.name, kind,
+      thumb: item.thumb || null, state: 'active', startedAt: started,
+    });
     const stream = fs.createReadStream(item.path);
+    let sent = 0;
     let lastEmit = 0;
     stream.on('data', (chunk) => {
-      t.received += chunk.length;
+      sent += chunk.length;
       const now = Date.now();
       if (now - lastEmit > 120) {
         lastEmit = now;
-        this.emit('transfer-progress', { id: t.id, received: t.received, size: st.size });
+        this.emit('transfer-progress', { id: tid, received: sent, size: st.size });
       }
     });
     try {
       await pipeline(stream, res);
-      const entry = { id: t.id, direction: 'out', name: item.name, path: item.path, size: st.size, device: dev.name, at: Date.now() };
+      const entry = {
+        id: tid, direction: 'out', kind, name: item.name, path: item.path, size: st.size, device: dev.name,
+        at: Date.now(), thumb: item.thumb || null,
+      };
       this.addHistory(entry);
+      this.bumpStats(entry, Date.now() - started);
       this.emit('transfer-done', entry);
     } catch (e) {
-      this.emit('transfer-error', { id: t.id, error: e.message });
+      this.emit(this.downloads.has(tid) ? 'transfer-error' : 'transfer-cancelled', { id: tid, error: e.message });
+    } finally {
+      this.downloads.delete(tid);
     }
+  }
+
+  cancelDownload(id) {
+    const res = this.downloads.get(id);
+    if (!res) return;
+    this.downloads.delete(id);
+    res.destroy();
   }
 }
 

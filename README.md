@@ -19,12 +19,24 @@ Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi‑Fi, sin cables, 
 
 ## Funciones
 
-- Transferencia en las dos direcciones, con progreso y velocidad en tiempo real.
-- Emparejamiento único por QR; cada dispositivo tiene su propia clave, que se puede revocar.
-- 3 skins: **Clásico** (LCD verde), **Plata cromada** y **Luna XP**. La skin se aplica también en el móvil.
-- Modo plegado: doble clic en la barra de título.
-- Icono en la bandeja del sistema y arranque con el sistema.
-- Español e inglés.
+**Transferencias**
+- En las dos direcciones, con progreso y velocidad en tiempo real.
+- **Vista previa en directo**: la foto o el vídeo que se está enviando aparece en la pantalla LCD (en el PC y en el móvil).
+- **Pausar, reanudar y cancelar** desde el PC o desde el móvil.
+- **Reanudación automática**: si se corta el Wi‑Fi o se bloquea el móvil a mitad de un vídeo, continúa donde se quedó. Si vuelves a elegir el mismo archivo, también.
+- **Texto y enlaces** entre móvil y PC (lo que llega al PC se copia al portapapeles; en el PC, `Ctrl+V` abre «Enviar texto»).
+
+**Fotos y vídeos**
+- Miniaturas en el historial y **visor integrado** (doble clic) con flechas y tira de miniaturas.
+- **HEIC → JPG** opcional: guardar el original, original + JPG, o solo JPG.
+- **Carpetas por tipo**: fotos, vídeos y otros archivos en carpetas distintas, cada una configurable.
+
+**Interfaz**
+- 3 skins: **Clásico** (LCD verde), **Plata cromada** y **Luna XP**, y **skins personalizadas** en CSS ([cómo crear una](SKINS.md)). La skin se aplica también en el móvil.
+- **Modo mini** (una LCD diminuta), **siempre visible** y modo plegado (doble clic en la barra de título).
+- **Efectos de sonido** al emparejar, terminar o fallar (desactivables).
+- **Estadísticas**: total transferido, fotos, vídeos y velocidad máxima. Clic en la LCD para ir cambiando lo que muestra.
+- Icono en la bandeja del sistema, arranque con el sistema, español e inglés.
 - Actualizaciones automáticas desde GitHub Releases.
 
 ## Plataformas
@@ -44,7 +56,8 @@ Requiere [Node.js](https://nodejs.org) 20 o superior.
 ```bash
 npm install
 npm start          # ejecutar en modo desarrollo
-npm run shots      # prueba automática + capturas de todas las skins en ./shots
+npm test           # pruebas del servidor (HEIC_SAMPLE=foto.heic para probar también la conversión)
+npm run shots      # prueba de punta a punta con la app real + capturas en ./shots
 npm run icons      # regenerar los iconos desde el SVG
 npm run dist       # crear el instalador de Windows en ./dist
 ```
@@ -67,11 +80,18 @@ El PC anuncia el servicio `_ntransfer._tcp` por mDNS/Bonjour y escucha en el pue
 |---|---|---|
 | GET | `/api/v1/info` | Información pública del PC |
 | POST | `/api/v1/pair` | `{code, name, platform}` → `{token, deviceId}` |
-| GET | `/api/v1/me` | Datos del dispositivo y de la skin/idioma del PC |
-| PUT | `/api/v1/upload` | Cuerpo = archivo; cabeceras `X-File-Name` (URI‑encoded) y `X-File-Mtime` |
-| GET | `/api/v1/outbox` | Archivos que ofrece el PC |
+| GET | `/api/v1/me` | Datos del dispositivo, skin/idioma del PC y skins disponibles |
+| POST | `/api/v1/uploads` | `{name, size, mtime, type, thumb?}` → `{id, offset}`; reanuda si el mismo archivo estaba a medias |
+| PUT | `/api/v1/uploads/:id?offset=N` | Bytes desde `N` → `{done, offset}`. `409` offset incorrecto · `423` en pausa · `410` cancelada |
+| GET | `/api/v1/uploads/:id` | `{offset, size, state}` |
+| POST | `/api/v1/uploads/:id/state` | `{state: "paused" \| "active"}` |
+| DELETE | `/api/v1/uploads/:id` | Cancelar |
+| PUT | `/api/v1/upload` | Subida simple de una vez (cabeceras `X-File-Name`, `X-File-Mtime`) |
+| POST | `/api/v1/text` | `{text}` |
+| GET | `/api/v1/outbox` | Archivos y textos que ofrece el PC |
 | GET | `/api/v1/outbox/:id` | Descarga (admite `Range`) |
-| GET | `/api/v1/events` | Server‑Sent Events: `outbox`, `settings`, `unpaired` |
+| GET | `/api/v1/outbox/:id/thumb` | Miniatura JPG |
+| GET | `/api/v1/events` | Server‑Sent Events: `outbox`, `settings`, `control` (`{id, action}`), `unpaired` |
 
 Autenticación: cabecera `X-Device-Token` o parámetro `?d=`.
 

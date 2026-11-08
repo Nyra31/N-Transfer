@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; media-src file:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>N-Transfer</title>
+<link rel="stylesheet" href="../shared/skins/base.css">
+<link rel="stylesheet" href="../shared/skins/winamp.css">
+<link rel="stylesheet" href="../shared/skins/chrome.css">
+<link rel="stylesheet" href="../shared/skins/luna.css">
+<style id="customSkins"></style>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body class="nt skin-winamp">
+<div id="app">
+  <header class="nt-titlebar v-title" id="titlebar">
+    <span class="stripes"></span>
+    <span class="v-name" id="title">N-TRANSFER</span>
+    <span class="stripes"></span>
+    <button class="nt-btn nt-tbtn" data-act="minimize" data-i18n-title="minimize">_</button>
+    <button class="nt-btn nt-tbtn" data-act="maximize" data-i18n-title="maximize">□</button>
+    <button class="nt-btn nt-tbtn danger" data-act="close" data-i18n-title="close">×</button>
+  </header>
+  <main class="stage nt-inset" id="stage">
+    <img id="photo" alt="" hidden>
+    <video id="video" controls playsinline hidden></video>
+    <div class="nt-lcd no-play" id="noPlay" hidden>
+      <img id="noPlayThumb" alt="">
+      <p data-i18n="viewerNoPlay"></p>
+      <button class="nt-btn" id="btnSystem"><span data-i18n="openWithSystem"></span></button>
+    </div>
+    <div class="loading" id="loading" hidden>…</div>
+    <button class="nav prev nt-btn" id="prev" data-i18n-title="prev">◀</button>
+    <button class="nav next nt-btn" id="next" data-i18n-title="next">▶</button>
+  </main>
+  <footer class="v-bar">
+    <div class="nt-lcd v-info"><span id="info"></span><span id="counter"></span></div>
+    <button class="nt-btn" id="btnOpen"><span data-i18n="openFile"></span></button>
+    <button class="nt-btn" id="btnShow"><span data-i18n="showInFolder"></span></button>
+  </footer>
+  <nav class="strip nt-inset" id="strip"></nav>
+</div>
+<script src="../shared/i18n.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

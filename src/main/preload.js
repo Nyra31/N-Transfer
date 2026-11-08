@@ -2,9 +2,10 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const CHANNELS = new Set([
-  'state', 'set', 'pick-folder', 'outbox-add', 'outbox-pick', 'outbox-remove', 'outbox-clear',
-  'device-forget', 'pair-new', 'open-folder', 'item-menu', 'main-menu', 'win', 'history-clear',
-  'update-install', 'open-external',
+  'state', 'set', 'pick-folder', 'reset-folder', 'outbox-add', 'outbox-pick', 'outbox-text', 'outbox-remove',
+  'outbox-clear', 'device-forget', 'pair-new', 'open-folder', 'item-menu', 'open-entry', 'main-menu', 'win',
+  'history-clear', 'stats-reset', 'update-install', 'open-external', 'clipboard-read', 'clipboard-write',
+  'transfer', 'skins-folder', 'viewer-state', 'viewer-src', 'viewer-win', 'viewer-file',
 ]);
 
 contextBridge.exposeInMainWorld('nt', {

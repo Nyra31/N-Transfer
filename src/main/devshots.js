@@ -1,121 +1,239 @@
 'use strict';
 /**
- * Solo para desarrollo (NT_SHOTS=<carpeta>): empareja un dispositivo de prueba, sube archivos de verdad
- * por HTTP, deja una subida a medias y guarda capturas del PC y del móvil con cada skin.
+ * Solo para desarrollo (NT_SHOTS=<carpeta>): prueba la app de punta a punta con datos reales y guarda capturas.
+ * - Sube archivos por la API reanudable (con miniaturas), deja una subida en curso y otra en pausa.
+ * - Usa el código real del móvil en una ventana de 390×844 para subir un archivo y enviar un texto.
+ * - Captura el PC (3 skins + skin personalizada), el móvil, el visor, el modo mini y las preferencias.
  */
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, nativeImage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function put(port, token, name, body, { slow = false } = {}) {
+/** Una «foto» de prueba: degradado de colores (BGRA) convertido a JPG. */
+function fakePhoto(hue, w = 320, h = 240) {
+  const buf = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const a = (x / w + hue) % 1;
+      buf[i] = Math.round(255 * Math.abs(Math.sin(a * Math.PI))); // B
+      buf[i + 1] = Math.round(200 * (y / h)); // G
+      buf[i + 2] = Math.round(255 * Math.abs(Math.cos(a * Math.PI))); // R
+      buf[i + 3] = 255;
+    }
+  }
+  return nativeImage.createFromBitmap(buf, { width: w, height: h }).toJPEG(80);
+}
+const dataUrl = (jpg) => 'data:image/jpeg;base64,' + jpg.toString('base64');
+
+function request(port, token, method, p, body, headers = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({
-      host: '127.0.0.1', port, path: '/api/v1/upload', method: 'PUT',
-      headers: { 'X-Device-Token': token, 'X-File-Name': encodeURIComponent(name), 'Content-Length': body.length },
-    }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: { 'X-Device-Token': token, ...headers } }, (res) => {
       let data = '';
       res.on('data', (d) => (data += d));
       res.on('end', () => resolve({ status: res.statusCode, data }));
     });
     req.on('error', reject);
-    if (!slow) return req.end(body);
-    // Subida lenta: ~1 MB cada 100 ms, para que se vea en curso en la captura.
-    let off = 0;
-    const step = () => {
-      if (off >= body.length) return req.end();
-      req.write(body.subarray(off, off + 1048576));
-      off += 1048576;
-      setTimeout(step, 100);
-    };
-    step();
+    if (body && body.slow) {
+      // ~1 MB cada 100 ms, para que se vea en curso en las capturas
+      let off = 0;
+      const step = () => {
+        if (off >= body.buf.length) return req.end();
+        req.write(body.buf.subarray(off, off + 1048576));
+        off += 1048576;
+        setTimeout(step, 100);
+      };
+      return step();
+    }
+    req.end(body);
   });
 }
 
-module.exports = async function devshots({ app, win, server, store, send }) {
+async function upload(port, token, name, buf, { thumb, slow = false, mtime = 0 } = {}) {
+  const meta = JSON.stringify({ name, size: buf.length, mtime, thumb: thumb ? dataUrl(thumb) : undefined });
+  const s = JSON.parse((await request(port, token, 'POST', '/api/v1/uploads', meta, { 'Content-Type': 'application/json' })).data);
+  const put = request(port, token, 'PUT', `/api/v1/uploads/${s.id}?offset=0`, slow ? { slow: true, buf } : buf);
+  return { id: s.id, done: put };
+}
+
+async function capture(w, file) {
+  fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
+}
+
+module.exports = async function devshots({ app, win, server, store, send, viewer, settings }) {
   const out = path.resolve(process.env.NT_SHOTS);
   fs.mkdirSync(out, { recursive: true });
   store.set('destDir', path.join(out, 'received'));
   const report = [];
+  const check = (name, ok, extra = '') => report.push(`${ok ? '✔' : '✘'} ${name}${extra ? ' — ' + extra : ''}`);
+  const fullSettings = settings;
   try {
     const { token } = server.pairDevice('iPhone de Ben', 'ios');
     const port = server.port;
-    for (const [name, size] of [['IMG_0421.HEIC', 2.1], ['IMG_0422.HEIC', 1.9], ['Factura marzo.pdf', 0.3]]) {
-      const r = await put(port, token, name, Buffer.alloc(Math.round(size * 1048576), 7));
-      report.push(`upload ${name}: ${r.status} ${r.data}`);
-    }
-    const dup = await put(port, token, 'IMG_0421.HEIC', Buffer.from('dup'));
-    report.push(`duplicate name: ${dup.data}`);
-    const bad = await new Promise((res) => {
-      http.request({ host: '127.0.0.1', port, path: '/api/v1/upload', method: 'PUT', headers: { 'X-Device-Token': 'x'.repeat(32) } },
-        (r) => res(r.statusCode)).end('x');
-    });
-    report.push(`bad token: ${bad}`);
-    await server.addToOutbox([path.join(out, 'received', 'Factura marzo.pdf')]);
 
-    const slow = put(port, token, 'IMG_0423.MOV', Buffer.alloc(80 * 1048576, 1), { slow: true });
+    // ── Historial con miniaturas ──
+    const photos = [0.0, 0.33, 0.66].map((h) => fakePhoto(h));
+    for (const [i, jpg] of photos.entries()) {
+      const u = await upload(port, token, `IMG_04${21 + i}.JPG`, jpg, { thumb: jpg });
+      await u.done;
+    }
+    await (await upload(port, token, 'Factura marzo.pdf', Buffer.alloc(300000, 7))).done;
+    const heicSample = process.env.HEIC_SAMPLE;
+    if (heicSample && fs.existsSync(heicSample)) {
+      store.set('heicMode', 'both');
+      const u = await upload(port, token, 'IMG_0500.HEIC', fs.readFileSync(heicSample), { thumb: photos[1] });
+      const r = await u.done;
+      check('HEIC dentro de la app (modo both)', r.status === 200 && fs.existsSync(path.join(out, 'received', 'IMG_0500.jpg')), r.data);
+      store.set('heicMode', 'original');
+    }
+    await request(port, token, 'POST', '/api/v1/text', JSON.stringify({ text: 'https://github.com/Nyra31/N-Transfer' }), { 'Content-Type': 'application/json' });
+    await server.addToOutbox([path.join(out, 'received', 'IMG_0421.JPG'), path.join(out, 'received', 'Factura marzo.pdf')]);
+    server.addTextToOutbox('Código del wifi: N-Transfer-2000');
+    await wait(500);
+    check('miniatura generada en el PC para «Para el móvil»', server.outbox().some((o) => o.thumb), JSON.stringify(server.outbox().map((o) => o.thumb || null)));
+
+    // ── Una subida en pausa y otra en curso (vista previa en directo) ──
+    const paused = await upload(port, token, 'VID_0530.MOV', Buffer.alloc(60 * 1048576, 2), { thumb: fakePhoto(0.85), slow: true });
+    paused.done.catch(() => {}); // al pausar, el servidor corta esta conexión a propósito
+    await wait(600);
+    server.pauseUpload(paused.id);
+    const slow = await upload(port, token, 'IMG_0599.MOV', Buffer.alloc(90 * 1048576, 1), { thumb: fakePhoto(0.12), slow: true });
+
     win.show();
     await wait(2500);
-
-    const mobile = new BrowserWindow({
-      width: 390, height: 844, show: false, webPreferences: { partition: 'shots-mobile' },
-    });
     for (const skin of ['winamp', 'chrome', 'luna']) {
       store.set('skin', skin);
       server.settingsChanged();
-      send('settings', { skin, lang: store.get('lang'), destDir: store.get('destDir'), closeToTray: true, autostart: false, port });
+      send('settings', fullSettings());
       await wait(700);
-      fs.writeFileSync(path.join(out, `pc-${skin}.png`), (await win.webContents.capturePage()).toPNG());
-      await mobile.loadURL(`http://127.0.0.1:${port}/?d=${token}&skin=${skin}`);
-      await wait(1200);
-      fs.writeFileSync(path.join(out, `mobile-${skin}.png`), (await mobile.webContents.capturePage()).toPNG());
+      await capture(win, path.join(out, `pc-${skin}.png`));
     }
-    // Pantalla de emparejamiento del móvil y diálogo QR del PC
-    await mobile.loadURL(`http://127.0.0.1:${port}/pair?c=${server.pairCode}&skin=winamp`);
-    await wait(1000);
-    fs.writeFileSync(path.join(out, 'mobile-pair.png'), (await mobile.webContents.capturePage()).toPNG());
-    send('open-pair');
-    await wait(600);
-    fs.writeFileSync(path.join(out, 'pc-pair.png'), (await win.webContents.capturePage()).toPNG());
 
-    // ── Flujo «añadir a pantalla de inicio» ──
-    // 1) Emparejar desde la página del QR (sesión limpia, como Safari)
-    const safari = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-safari' } });
-    await safari.loadURL(`http://127.0.0.1:${port}/pair?c=${server.pairCode}`);
-    await wait(500);
-    await safari.webContents.executeJavaScript(`document.getElementById('btnPair').click()`);
-    await wait(2500);
-    const after = await safari.webContents.executeJavaScript(
-      `({ url: location.href, manifest: document.getElementById('manifest').getAttribute('href'),
-          view: ['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden) })`);
-    report.push(`after pairing: view=${after.view} url-has-token=${/[?&]d=/.test(after.url)} manifest=${after.manifest.replace(/d=.*/, 'd=<token>')}`);
-    const newToken = new URL(after.url).searchParams.get('d');
-    const man = await (await fetch(`http://127.0.0.1:${port}${after.manifest}`)).json();
-    report.push(`manifest start_url has token: ${man.start_url === '/?d=' + newToken}`);
-    // 2) La app de inicio arranca en «/» sin almacenamiento: debe ofrecer escribir el código
-    const homeApp = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-home' } });
-    await homeApp.loadURL(`http://127.0.0.1:${port}/`);
+    // ── Modo mini ──
+    send('toggle-mini');
+    await wait(900);
+    await capture(win, path.join(out, 'pc-mini.png'));
+    send('toggle-mini');
+    await wait(700);
+
+    // ── Preferencias ──
+    store.set('splitByType', true);
+    send('settings', fullSettings());
+    for (const page of ['folders', 'stats']) {
+      send('open-settings', page);
+      await wait(500);
+      await capture(win, path.join(out, `pc-prefs-${page}.png`));
+    }
+    store.set('splitByType', false);
+    send('settings', fullSettings());
+
+    // ── Skin personalizada (la plantilla) ──
+    const skinsDir = path.join(app.getPath('userData'), 'skins');
+    fs.mkdirSync(skinsDir, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, '..', 'shared', 'skins', 'template.css'), path.join(skinsDir, 'mi-skin.css'));
+    await wait(1200);
+    check('skin personalizada detectada', server.skinsList().some((s) => s.id === 'mi-skin'));
+    store.set('skin', 'mi-skin');
+    server.settingsChanged();
+    send('settings', fullSettings());
     await wait(800);
-    fs.writeFileSync(path.join(out, 'mobile-code.png'), (await homeApp.webContents.capturePage()).toPNG());
-    const typed = server.pairCodeDisplay.toLowerCase(); // minúsculas y con guion: debe aceptarse igual
-    await homeApp.webContents.executeJavaScript(`(() => { const i = document.getElementById('codeInput');
-      i.value = ${JSON.stringify(typed)}; i.dispatchEvent(new Event('input')); document.getElementById('btnCode').click(); })()`);
-    await wait(2500);
-    const viaCode = await homeApp.webContents.executeJavaScript(
-      `({ url: location.href, view: ['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden) })`);
-    report.push(`pair by typed code: view=${viaCode.view} url-has-token=${/[?&]d=/.test(viaCode.url)}`);
-    // 3) Código incorrecto
-    const wrong = await fetch(`http://127.0.0.1:${port}/api/v1/pair`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'AAAA-AAAA', name: 'x' }),
-    });
-    report.push(`wrong code: ${wrong.status}`);
-    report.push(`devices: ${server.devices().map((d) => d.name).join(', ')}`);
+    send('open-settings', 'skins');
+    await wait(400);
+    await capture(win, path.join(out, 'pc-custom-skin.png'));
+    send('open-settings', 'general');
+    await wait(100);
 
-    const r = await slow;
-    report.push(`slow upload: ${r.status} ${r.data}`);
-    report.push('files: ' + fs.readdirSync(path.join(out, 'received')).join(', '));
+    // ── Móvil (código real) ──
+    const mobile = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-mobile' } });
+    await mobile.loadURL(`http://127.0.0.1:${port}/?d=${token}&skin=winamp`);
+    await wait(1200);
+    const before = server.history().length;
+    // Sube una «foto» (PNG del icono + relleno) eligiéndola como haría el usuario
+    await mobile.webContents.executeJavaScript(`(async () => {
+      const png = await (await fetch('/m/icons/icon-512.png')).arrayBuffer();
+      const file = new File([png, new Uint8Array(8 * 1048576)], 'IMG_0601.PNG', { type: 'image/png', lastModified: 1700000000000 });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const input = document.getElementById('pickMedia'); input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    await wait(4000);
+    const got = server.history().find((h) => h.name === 'IMG_0601.PNG');
+    check('subida desde el móvil con miniatura', !!got && !!got.thumb && got.size === 8 * 1048576 + fs.statSync(path.join(__dirname, '..', 'mobile', 'icons', 'icon-512.png')).size,
+      got ? `thumb=${got.thumb} size=${got.size}` : `historial ${before}→${server.history().length}`);
+    // Texto desde el móvil
+    await mobile.webContents.executeJavaScript(`(() => {
+      document.getElementById('btnText').click();
+      document.getElementById('textInput').value = 'Hola desde el móvil';
+      document.getElementById('btnTextSend').click();
+    })()`);
+    await wait(1200);
+    check('texto desde el móvil', server.history().some((h) => h.kind === 'text' && h.text === 'Hola desde el móvil'));
+    const domCheck = await mobile.webContents.executeJavaScript(`({
+      texts: [...document.querySelectorAll('#fromPc .text-body')].map((e) => e.textContent),
+      thumbs: document.querySelectorAll('#fromPc .thumb img').length,
+      queueThumbs: document.querySelectorAll('#queue .thumb img').length,
+    })`);
+    check('el móvil muestra el texto y las miniaturas del PC', domCheck.texts.includes('Código del wifi: N-Transfer-2000') && domCheck.thumbs >= 1, JSON.stringify(domCheck));
+    for (const skin of ['winamp', 'luna', 'mi-skin']) {
+      // Igual que elegirla en el menú del móvil
+      await mobile.webContents.executeJavaScript(`document.querySelector('#skinRow [data-skin="${skin}"]').click(); window.scrollTo(0, 0);`);
+      await wait(500);
+      const vars = await mobile.webContents.executeJavaScript(`getComputedStyle(document.body).getPropertyValue('--lcd-fg').trim()`);
+      check(`skin ${skin} aplicada en el móvil`, !!vars, vars);
+      await capture(mobile, path.join(out, `mobile-${skin}.png`));
+    }
+
+    // ── Pausa/cancelación remotas desde el PC hacia el móvil ──
+    await mobile.webContents.executeJavaScript(`(() => {
+      const file = new File([new Uint8Array(400 * 1048576)], 'VID_GRANDE.MOV', { type: 'video/quicktime' });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const input = document.getElementById('pickFiles'); input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    let big = null;
+    for (let i = 0; i < 40 && !big; i++) {
+      await wait(50);
+      big = server.activeTransfers().find((a) => a.name === 'VID_GRANDE.MOV');
+    }
+    if (big) {
+      server.pauseUpload(big.id);
+      await wait(800);
+      const st = await mobile.webContents.executeJavaScript(`[...document.querySelectorAll('#queue li')].map((li) => li.querySelector('.name').textContent + ':' + li.querySelector('.state').textContent)`);
+      check('pausa desde el PC llega al móvil', st.some((s) => /VID_GRANDE.*(pausa|Paused)/i.test(s)), JSON.stringify(st));
+      server.resumeUpload(big.id);
+      await wait(300);
+      server.cancelUpload(big.id);
+      await wait(800);
+      const st2 = await mobile.webContents.executeJavaScript(`[...document.querySelectorAll('#queue li')].map((li) => li.querySelector('.name').textContent + ':' + li.querySelector('.state').textContent)`);
+      check('cancelación desde el PC llega al móvil', st2.some((s) => /VID_GRANDE.*(Cancelado|Cancelled)/.test(s)), JSON.stringify(st2));
+      check('sin .ntpart tras cancelar', !fs.existsSync(path.join(out, 'received', 'VID_GRANDE.MOV.ntpart')));
+    } else {
+      check('subida grande desde el móvil (para pausa remota)', false, 'no apareció');
+    }
+
+    // ── Visor ──
+    const photoEntry = server.history().find((h) => h.name === 'IMG_0422.JPG');
+    viewer.open(photoEntry.id);
+    await wait(1800);
+    await capture(viewer.window, path.join(out, 'viewer.png'));
+    const heicEntry = server.history().find((h) => h.name === 'IMG_0500.HEIC');
+    if (heicEntry) {
+      viewer.open(heicEntry.id);
+      await wait(2500);
+      const shown = await viewer.window.webContents.executeJavaScript(`({ src: document.getElementById('photo').src, ok: !document.getElementById('photo').hidden && document.getElementById('photo').naturalWidth > 0 })`);
+      check('el visor muestra una foto HEIC (convertida)', shown.ok, shown.src.slice(-40));
+    }
+    viewer.window?.close();
+
+    // Restaurar skin clásica para dejar la configuración limpia
+    store.set('skin', 'winamp');
+    server.cancelUpload(paused.id);
+    const r = await slow.done;
+    check('subida lenta terminada', r.status === 200, r.data);
+    report.push('stats: ' + JSON.stringify(server.stats()));
   } catch (e) {
     report.push('ERROR ' + e.stack);
   }

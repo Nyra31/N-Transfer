@@ -1,7 +1,7 @@
 {
   "name": "n-transfer",
   "productName": "N-Transfer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi-Fi, con skins al estilo de los 2000",
   "main": "src/main/main.js",
   "author": "Nyra31",
@@ -15,6 +15,7 @@
   "scripts": {
     "start": "node scripts/electron.js .",
     "icons": "node scripts/electron.js scripts/make-icons.js",
+    "test": "node scripts/test-core.js",
     "shots": "node scripts/shots.js",
     "dist": "electron-builder --win",
     "dist:all": "electron-builder --win --mac --linux",
@@ -23,6 +24,7 @@
   "dependencies": {
     "bonjour-service": "^1.4.4",
     "electron-updater": "^6.8.11",
+    "heic-convert": "^2.1.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
@@ -45,8 +47,18 @@
       "!src/main/devshots.js",
       "package.json"
     ],
+    "asarUnpack": [
+      "src/core/heic-worker.js",
+      "node_modules/heic-convert/**",
+      "node_modules/heic-decode/**",
+      "node_modules/libheif-js/**",
+      "node_modules/jpeg-js/**",
+      "node_modules/pngjs/**"
+    ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -59,12 +71,18 @@
       "artifactName": "N-Transfer-Setup-${version}.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Utility",
       "icon": "build/icon.png",
       "maintainer": "Nyra31"

@@ -1,0 +1,69 @@
+/* @name Mi skin */
+/*
+ * PLANTILLA DE SKIN PARA N-TRANSFER
+ * ---------------------------------
+ * 1. Copia este archivo con otro nombre, por ejemplo  neon-rosa.css
+ * 2. Cambia la clase de abajo para que coincida con el nombre del archivo:  .skin-neon-rosa
+ * 3. Cambia el nombre visible en la primera línea:  @name Neón rosa
+ * 4. Guarda: N-Transfer recarga las skins solo. Elígela en Menú → Skin.
+ *    El móvil también la usa (si no has elegido otra en el móvil).
+ *
+ * Solo hace falta cambiar los colores. Puedes usar cualquier CSS válido (degradados, sombras…),
+ * pero no se cargan imágenes ni fuentes de Internet.
+ */
+.skin-mi-skin {
+  /* Tipografías */
+  --font-ui: Tahoma, Verdana, sans-serif;            /* textos y botones */
+  --font-lcd: Consolas, 'Lucida Console', monospace; /* pantalla LCD */
+  --text: #ffe9f6;                                   /* texto general */
+  --text-dim: #c99bb6;                               /* texto secundario */
+
+  /* Marco de la ventana */
+  --frame-bg: linear-gradient(180deg, #5a2246 0%, #2b0f22 100%);
+  --frame-hi: #a1477f;                               /* borde claro (bisel) */
+  --frame-lo: #12040d;                               /* borde oscuro (bisel) */
+  --panel-bg: #3a1530;
+
+  /* Barra de título */
+  --title-bg: linear-gradient(180deg, #7a2d60, #3d1230);
+  --title-fg: #ffd1ec;
+  --title-stripe: repeating-linear-gradient(180deg, #ff8fd0 0 1px, transparent 1px 3px);
+
+  /* Pantalla LCD */
+  --lcd-bg: #12000c;
+  --lcd-fg: #ff5fc8;
+  --lcd-dim: #6a1d52;
+  --lcd-glow: 0 0 7px rgba(255, 80, 200, 0.6);
+  --lcd-border: #000;
+
+  /* Botones */
+  --btn-bg: linear-gradient(180deg, #8a3a6e, #55193f);
+  --btn-hover: linear-gradient(180deg, #9d4a80, #63204a);
+  --btn-press: linear-gradient(180deg, #3d1230, #55193f);
+  --btn-fg: #ffe9f6;
+  --btn-hi: #c86aa6;
+  --btn-lo: #1a0613;
+  --btn-radius: 3px;
+
+  /* Barras de progreso */
+  --accent: linear-gradient(180deg, #ffb3e2, #ff3fb4 55%, #c4167f);
+  --track: #1a0613;
+
+  /* Lista */
+  --list-bg: #12000c;
+  --list-fg: #ff8fd6;
+  --list-dim: #a04f85;
+  --list-sel-bg: #ff3fb4;
+  --list-sel-fg: #fff;
+  --list-active: #fff;
+
+  /* Visualizador de espectro (de abajo a arriba) y picos */
+  --viz-1: #ff3fb4;
+  --viz-2: #ffa6dc;
+  --viz-3: #ffffff;
+  --viz-peak: #ffe0f3;
+
+  /* Campos de formulario */
+  --input-bg: #12000c;
+  --input-fg: #ff8fd6;
+}
