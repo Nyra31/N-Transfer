@@ -1,0 +1,57 @@
+/* Skin «Clásico»: metal oscuro, LCD verde y lista verde sobre negro. */
+.skin-winamp {
+  --font-ui: Tahoma, Verdana, 'DejaVu Sans', sans-serif;
+  --font-lcd: Consolas, 'Lucida Console', 'DejaVu Sans Mono', monospace;
+  --font-list: Arial, 'Liberation Sans', sans-serif;
+  --text: #d9d9e3;
+  --text-dim: #9a9ab0;
+
+  --frame-bg: linear-gradient(180deg, #3f4055 0%, #2b2c3b 45%, #212230 100%);
+  --frame-hi: #6c6d88;
+  --frame-lo: #0b0b11;
+  --panel-bg: #262736;
+
+  --title-bg: linear-gradient(180deg, #4b4c65 0%, #2d2e3f 100%);
+  --title-fg: #e9d48a;
+  --title-stripe: repeating-linear-gradient(180deg, #c7b166 0 1px, transparent 1px 3px);
+  --title-shadow: 1px 1px 0 #000;
+
+  --lcd-bg: #000;
+  --lcd-fg: #00e600;
+  --lcd-dim: #0d5d0d;
+  --lcd-glow: 0 0 6px rgba(0, 255, 0, 0.5);
+  --lcd-border: #000;
+
+  --btn-bg: linear-gradient(180deg, #62647f 0%, #3c3d51 100%);
+  --btn-hover: linear-gradient(180deg, #72748f 0%, #47485e 100%);
+  --btn-press: linear-gradient(180deg, #2a2b39 0%, #3b3c50 100%);
+  --btn-fg: #e6e6ef;
+  --btn-hi: #9092ae;
+  --btn-lo: #111118;
+  --btn-radius: 2px;
+
+  --accent: linear-gradient(180deg, #f5dc6e 0%, #c49a28 55%, #9c7516 100%);
+  --track: #101018;
+
+  --list-bg: #000;
+  --list-fg: #00e600;
+  --list-dim: #3e9e3e;
+  --list-sel-bg: #0000c8;
+  --list-sel-fg: #fff;
+  --list-active: #fff;
+
+  --viz-1: #1ec81e;
+  --viz-2: #e0e000;
+  --viz-3: #ef3c00;
+  --viz-peak: #c8c8c8;
+
+  --input-bg: #000;
+  --input-fg: #00e600;
+  --check-color: #3c9e3c;
+  --legend-fg: #e9d48a;
+}
+.skin-winamp .nt-tbtn {
+  width: 16px;
+  height: 14px;
+  font-size: 9px;
+}

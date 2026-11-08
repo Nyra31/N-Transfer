@@ -1,0 +1,27 @@
+name: Release
+
+# Al subir una etiqueta vX.Y.Z se compila el instalador y se publica en GitHub Releases.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        # Para publicar también en Mac y Linux, añade: macos-latest, ubuntu-latest
+        os: [windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

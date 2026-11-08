@@ -1,0 +1,169 @@
+/* Componentes comunes de N-Transfer (PC y móvil). Cada skin define las variables. */
+
+.nt {
+  font-family: var(--font-ui);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Botón biselado ─────────────────────────────── */
+.nt-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-lo);
+  border-radius: var(--btn-radius);
+  box-shadow: inset 1px 1px 0 var(--btn-hi), inset -1px -1px 0 rgba(0, 0, 0, 0.28);
+  padding: 4px 10px;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.nt-btn:hover { background: var(--btn-hover); }
+.nt-btn:active,
+.nt-btn.pressed {
+  background: var(--btn-press);
+  box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.5);
+}
+.nt-btn:focus-visible { outline: 1px dotted var(--btn-fg); outline-offset: -4px; }
+.nt-btn:disabled { opacity: 0.45; cursor: default; }
+.nt-btn .ico { font-size: 1.1em; line-height: 1; }
+
+/* ── Pantalla LCD ───────────────────────────────── */
+.nt-lcd {
+  position: relative;
+  overflow: hidden;
+  background: var(--lcd-bg);
+  color: var(--lcd-fg);
+  font-family: var(--font-lcd);
+  text-shadow: var(--lcd-glow);
+  border: 1px solid var(--lcd-border);
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.55), 1px 1px 0 var(--frame-hi);
+  border-radius: var(--lcd-radius, 0);
+}
+.nt-lcd::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
+}
+.nt-lcd .dim { color: var(--lcd-dim); text-shadow: none; }
+
+/* ── Barra de progreso ──────────────────────────── */
+.nt-progress {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  background: var(--track);
+  border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.45);
+  border-radius: var(--progress-radius, 0);
+}
+.nt-progress > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+/* ── Panel hundido y lista tipo «playlist» ──────── */
+.nt-inset {
+  border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35), 1px 1px 0 var(--frame-hi);
+}
+.nt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--list-bg);
+  color: var(--list-fg);
+  font-family: var(--font-list, var(--font-ui));
+  font-size: 12px;
+  overflow: auto;
+}
+.nt-list li {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--list-line, transparent);
+  cursor: default;
+}
+.nt-list li:nth-child(even) { background: var(--list-alt, transparent); }
+.nt-list li.sel { background: var(--list-sel-bg); color: var(--list-sel-fg); }
+.nt-list li.sel .dim { color: inherit; opacity: 0.8; }
+.nt-list li.active { color: var(--list-active); }
+.nt-list .dim { color: var(--list-dim); }
+
+/* ── Mini-ventana (diálogos) ────────────────────── */
+.nt-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  background: var(--title-bg);
+  color: var(--title-fg);
+  font-weight: bold;
+  font-size: 11px;
+  letter-spacing: var(--title-spacing, 2px);
+  text-transform: var(--title-case, uppercase);
+  text-shadow: var(--title-shadow, none);
+  user-select: none;
+}
+.nt-titlebar .stripes {
+  flex: 1;
+  height: 8px;
+  background: var(--title-stripe, none);
+  opacity: 0.75;
+}
+.nt-tbtn {
+  width: 18px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+/* ── Formularios ────────────────────────────────── */
+.nt-input,
+.nt-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+  padding: 4px 6px;
+  border-radius: var(--input-radius, 0);
+  min-width: 0;
+}
+.nt-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.nt-check input { accent-color: var(--check-color, auto); width: 14px; height: 14px; }
+
+.nt-fieldset {
+  border: 1px solid var(--frame-lo);
+  box-shadow: 1px 1px 0 var(--frame-hi);
+  padding: 8px 10px 10px;
+  margin: 0;
+  border-radius: var(--fieldset-radius, 0);
+}
+.nt-fieldset legend { padding: 0 4px; color: var(--legend-fg, var(--text)); font-weight: bold; font-size: 11px; }
+
+/* Barras de scroll de la época */
+.nt ::-webkit-scrollbar { width: 14px; height: 14px; }
+.nt ::-webkit-scrollbar-track { background: var(--scroll-track, var(--track)); }
+.nt ::-webkit-scrollbar-thumb {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-lo);
+  box-shadow: inset 1px 1px 0 var(--btn-hi);
+  border-radius: var(--scroll-radius, 0);
+}

@@ -1,0 +1,66 @@
+/* Skin «Plata cromada»: aluminio cepillado, botones acuosos y LCD azul. */
+.skin-chrome {
+  --font-ui: 'Segoe UI', 'Lucida Grande', 'Helvetica Neue', Arial, sans-serif;
+  --font-lcd: 'Lucida Console', Consolas, 'DejaVu Sans Mono', monospace;
+  --text: #1f2733;
+  --text-dim: #586170;
+
+  --frame-bg: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.09) 0 1px, rgba(0, 0, 0, 0.035) 1px 3px),
+    linear-gradient(180deg, #f1f3f6 0%, #cdd2d9 46%, #b5bbc5 54%, #d6dae0 100%);
+  --frame-hi: #ffffff;
+  --frame-lo: #7a808b;
+  --panel-bg: #dfe3e8;
+
+  --title-bg: linear-gradient(180deg, #fdfdfe 0%, #dde1e6 50%, #cbd0d7 51%, #e1e4e9 100%);
+  --title-fg: #2a3240;
+  --title-shadow: 0 1px 0 #fff;
+  --title-spacing: 3px;
+
+  --lcd-bg: radial-gradient(ellipse at 50% -20%, #2a64aa 0%, #0d2a55 55%, #061632 100%);
+  --lcd-fg: #86dcff;
+  --lcd-dim: #2f6c9c;
+  --lcd-glow: 0 0 8px rgba(110, 200, 255, 0.75);
+  --lcd-border: #39404c;
+  --lcd-radius: 10px;
+
+  --btn-bg: linear-gradient(180deg, #ffffff 0%, #e6e9ee 48%, #ccd2da 52%, #eaedf1 100%);
+  --btn-hover: linear-gradient(180deg, #ffffff 0%, #eef4fb 48%, #c9dbf0 52%, #e9f1fa 100%);
+  --btn-press: linear-gradient(180deg, #b7bfca 0%, #dde2e8 100%);
+  --btn-fg: #232c38;
+  --btn-hi: #ffffff;
+  --btn-lo: #7d848f;
+  --btn-radius: 13px;
+
+  --accent: linear-gradient(180deg, #c6e9ff 0%, #56b2f0 48%, #1c80d6 52%, #63c3ff 100%);
+  --track: linear-gradient(180deg, #9ea5af, #c9ced5);
+  --progress-radius: 6px;
+
+  --list-bg: #f6f8fa;
+  --list-alt: #e8ecf2;
+  --list-fg: #1c2430;
+  --list-dim: #67707d;
+  --list-sel-bg: #3d82df;
+  --list-sel-fg: #fff;
+  --list-active: #0b5cc7;
+
+  --viz-1: #3fb8ff;
+  --viz-2: #9fe0ff;
+  --viz-3: #ffffff;
+  --viz-peak: #ffffff;
+
+  --input-bg: #fff;
+  --input-fg: #1c2430;
+  --input-radius: 4px;
+  --check-color: #2f7fe0;
+  --fieldset-radius: 8px;
+  --scroll-radius: 7px;
+  --scroll-track: #cfd4db;
+  --title-case: none;
+}
+.skin-chrome .nt-tbtn {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 9px;
+}
+.skin-chrome .nt-btn { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8); }

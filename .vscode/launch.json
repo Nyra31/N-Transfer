@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "N-Transfer",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/scripts/electron.js",
+      "args": ["."],
+      "console": "integratedTerminal"
+    }
+  ]
+}

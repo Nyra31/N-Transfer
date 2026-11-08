@@ -1,26 +1,80 @@
 {
-    "name": "ios-to-pc-transfer",
-    "version": "1.0.0",
-    "description": "Pasa fotos, videos y archivos del iPhone a Windows por Wi-Fi",
-    "main": "server.js",
-    "scripts": {
-        "start": "node server.js"
+  "name": "n-transfer",
+  "productName": "N-Transfer",
+  "version": "0.1.0",
+  "description": "Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi-Fi, con skins al estilo de los 2000",
+  "main": "src/main/main.js",
+  "author": "Nyra31",
+  "license": "MIT",
+  "homepage": "https://github.com/Nyra31/N-Transfer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nyra31/N-Transfer.git"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node scripts/electron.js .",
+    "icons": "node scripts/electron.js scripts/make-icons.js",
+    "shots": "node scripts/shots.js",
+    "dist": "electron-builder --win",
+    "dist:all": "electron-builder --win --mac --linux",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.4.4",
+    "electron-updater": "^6.8.11",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "allowScripts": {
+    "electron-winstaller": false
+  },
+  "build": {
+    "appId": "com.nyra31.ntransfer",
+    "productName": "N-Transfer",
+    "copyright": "© 2026 Nyra31",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
     },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
-    "type": "commonjs",
-    "dependencies": {
-        "bonjour-service": "^1.4.4",
-        "busboy": "^1.6.0",
-        "electron-updater": "^6.8.11",
-        "qrcode": "^1.5.4"
+    "files": [
+      "src/**/*",
+      "!src/main/devshots.js",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.png"
     },
-    "devDependencies": {
-        "electron": "^45.2.3",
-        "electron-builder": "^26.18.0"
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "N-Transfer",
+      "artifactName": "N-Transfer-Setup-${version}.${ext}"
     },
-    "allowScripts": {
-        "electron-winstaller": false
-    }
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "maintainer": "Nyra31"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Nyra31",
+        "repo": "N-Transfer"
+      }
+    ]
+  }
 }

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="N-Transfer">
+<meta name="theme-color" content="#1b1b24">
+<title>N-Transfer</title>
+<link rel="manifest" id="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/m/icons/apple-touch-icon.png">
+<link rel="icon" href="/m/icons/icon-192.png">
+<link rel="stylesheet" href="/shared/skins/base.css">
+<link rel="stylesheet" href="/shared/skins/winamp.css">
+<link rel="stylesheet" href="/shared/skins/chrome.css">
+<link rel="stylesheet" href="/shared/skins/luna.css">
+<link rel="stylesheet" href="/m/mobile.css">
+<script>
+  // Antes de pintar: el token va en la URL para que el icono de inicio lo conserve.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var d = q.get('d');
+    try { if (!d) d = localStorage.getItem('nt-token'); } catch (e) {}
+    if (d) document.getElementById('manifest').href = '/manifest.webmanifest?d=' + encodeURIComponent(d);
+  })();
+</script>
+</head>
+<body class="nt skin-winamp">
+<div class="phone">
+  <header class="nt-titlebar m-title">
+    <span class="stripes"></span><span>N-TRANSFER</span><span class="stripes"></span>
+    <button class="nt-btn nt-tbtn" id="btnMenu" hidden aria-label="menu">≡</button>
+  </header>
+
+  <div class="nt-lcd m-lcd">
+    <div class="lcd-row">
+      <span><span class="led" id="led">●</span> <span id="lcdStatus">…</span></span>
+      <span class="lcd-speed"><span id="lcdSpeed">0.0</span><small class="dim"> MB/s</small></span>
+    </div>
+    <div class="marquee" id="marquee"></div>
+    <div class="lcd-row bottom">
+      <canvas id="viz" width="150" height="26"></canvas>
+      <span class="lcd-small" id="lcdSmall"></span>
+    </div>
+  </div>
+  <div class="nt-progress m-seek"><i id="seek"></i></div>
+
+  <!-- Emparejar -->
+  <section class="view" id="viewPair" hidden>
+    <div class="panel nt-inset">
+      <h2 data-i18n="mPairTitle"></h2>
+      <label class="field"><span data-i18n="mDeviceName"></span>
+        <input class="nt-input" id="devName" maxlength="40" autocomplete="off"></label>
+      <button class="nt-btn big" id="btnPair"><span data-i18n="mPairButton"></span></button>
+      <p class="msg" id="pairMsg"></p>
+    </div>
+  </section>
+
+  <!-- Sin emparejar -->
+  <section class="view" id="viewNone" hidden>
+    <div class="panel nt-inset">
+      <h2 data-i18n="mNotPairedTitle"></h2>
+      <p data-i18n="mNotPaired"></p>
+    </div>
+  </section>
+
+  <!-- Principal -->
+  <section class="view" id="viewMain" hidden>
+    <div class="install nt-inset" id="installHint" hidden>
+      <span id="installText"></span>
+      <button class="nt-btn small" id="btnHideHint"><span data-i18n="mHide"></span></button>
+    </div>
+
+    <div class="send-btns">
+      <label class="nt-btn big"><span class="ico">▲</span><span data-i18n="mPhotos"></span>
+        <input id="pickMedia" type="file" accept="image/*,video/*" multiple></label>
+      <label class="nt-btn big"><span class="ico">▲</span><span data-i18n="mFiles"></span>
+        <input id="pickFiles" type="file" multiple></label>
+    </div>
+    <p class="keep-open" id="keepOpen" hidden data-i18n="mKeepOpen"></p>
+
+    <div class="section-title"><span data-i18n="mFromPc"></span> <span id="countFromPc"></span></div>
+    <ul class="nt-list nt-inset m-list" id="fromPc"></ul>
+    <p class="empty" id="emptyFromPc" data-i18n="mEmptyFromPc"></p>
+
+    <div class="section-title" id="queueTitle" hidden><span data-i18n="mQueue"></span> <span id="queueSummary"></span></div>
+    <ul class="nt-list nt-inset m-list" id="queue"></ul>
+  </section>
+</div>
+
+<!-- Menú -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-inner">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="mSettings"></span><span class="stripes"></span></header>
+    <div class="sheet-body">
+      <fieldset class="nt-fieldset">
+        <legend data-i18n="skin"></legend>
+        <div class="skin-row" id="skinRow">
+          <button class="nt-btn" data-skin="winamp" data-i18n="skinWinamp"></button>
+          <button class="nt-btn" data-skin="chrome" data-i18n="skinChrome"></button>
+          <button class="nt-btn" data-skin="luna" data-i18n="skinLuna"></button>
+        </div>
+      </fieldset>
+      <fieldset class="nt-fieldset">
+        <legend data-i18n="language"></legend>
+        <div class="skin-row" id="langRow">
+          <button class="nt-btn" data-lang="es">Español</button>
+          <button class="nt-btn" data-lang="en">English</button>
+        </div>
+      </fieldset>
+      <p class="pc-info" id="pcInfo"></p>
+      <button class="nt-btn big" id="btnUnpair"><span data-i18n="mUnpair"></span></button>
+      <button class="nt-btn big" id="btnCloseSheet"><span data-i18n="mClose"></span></button>
+    </div>
+  </div>
+</div>
+
+<script src="/shared/i18n.js"></script>
+<script src="/shared/viz.js"></script>
+<script src="/m/app.js"></script>
+</body>
+</html>

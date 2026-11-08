@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>N-Transfer</title>
+<link rel="stylesheet" href="../shared/skins/base.css">
+<link rel="stylesheet" href="../shared/skins/winamp.css">
+<link rel="stylesheet" href="../shared/skins/chrome.css">
+<link rel="stylesheet" href="../shared/skins/luna.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="nt skin-winamp">
+<div id="app">
+  <header class="nt-titlebar main-title" id="titlebar">
+    <button class="nt-btn nt-tbtn no-drag" data-act="menu" data-i18n-title="menu">≡</button>
+    <span class="stripes"></span>
+    <span class="title">N-TRANSFER</span>
+    <span class="stripes"></span>
+    <button class="nt-btn nt-tbtn no-drag" data-act="minimize" data-i18n-title="minimize">_</button>
+    <button class="nt-btn nt-tbtn no-drag" data-act="shade" data-i18n-title="shade">▴</button>
+    <button class="nt-btn nt-tbtn no-drag danger" data-act="close" data-i18n-title="close">×</button>
+  </header>
+
+  <section class="deck" id="deck">
+    <div class="nt-lcd lcd">
+      <div class="lcd-row">
+        <span class="lcd-status"><span class="led" id="led">●</span> <span id="lcdStatus">LISTO</span></span>
+        <span class="lcd-speed"><span id="lcdSpeed">0.0</span><small class="dim"> MB/s</small></span>
+      </div>
+      <div class="marquee" id="marquee"></div>
+      <div class="lcd-row bottom">
+        <canvas id="viz" width="190" height="34"></canvas>
+        <span class="lcd-stats" id="lcdStats"></span>
+      </div>
+    </div>
+    <div class="nt-progress seek"><i id="seek"></i></div>
+    <div class="controls">
+      <button class="nt-btn" id="btnPair"><span class="ico">⧉</span><span data-i18n="pair"></span></button>
+      <button class="nt-btn" id="btnSend"><span class="ico">▲</span><span data-i18n="sendToPhone"></span></button>
+      <button class="nt-btn" id="btnFolder"><span class="ico">▼</span><span data-i18n="folder"></span></button>
+      <button class="nt-btn" id="btnSettings" data-i18n-title="settings"><span class="ico">⚙</span></button>
+    </div>
+  </section>
+
+  <section class="playlist" id="playlist">
+    <nav class="tabs" role="tablist">
+      <button class="nt-btn tab" data-tab="transfers" role="tab"><span data-i18n="tabTransfers"></span></button>
+      <button class="nt-btn tab" data-tab="outbox" role="tab"><span data-i18n="tabOutbox"></span> <span class="badge" id="badgeOutbox"></span></button>
+      <button class="nt-btn tab" data-tab="devices" role="tab"><span data-i18n="tabDevices"></span> <span class="badge" id="badgeDevices"></span></button>
+    </nav>
+    <div class="pl-body nt-inset">
+      <ul class="nt-list" id="list" tabindex="0"></ul>
+      <div class="empty" id="empty"></div>
+    </div>
+    <footer class="pl-foot">
+      <span class="pl-summary" id="summary"></span>
+      <span class="pl-actions" id="actions"></span>
+    </footer>
+  </section>
+</div>
+
+<!-- Diálogo de emparejamiento -->
+<div class="overlay" id="pairDlg" hidden>
+  <div class="dialog">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="pairTitle"></span><span class="stripes"></span>
+      <button class="nt-btn nt-tbtn danger" data-close>×</button></header>
+    <div class="dlg-body pair-body">
+      <div class="qr-frame nt-inset"><img id="qr" alt="QR"></div>
+      <ol class="steps">
+        <li data-i18n="pairStep1"></li>
+        <li data-i18n="pairStep2"></li>
+        <li data-i18n="pairStep3"></li>
+      </ol>
+      <div class="nt-lcd pair-url"><span id="pairUrl"></span></div>
+      <div class="dlg-actions">
+        <button class="nt-btn" id="btnNewCode"><span data-i18n="pairNewCode"></span></button>
+        <button class="nt-btn" data-close><span data-i18n="ok"></span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Diálogo de preferencias -->
+<div class="overlay" id="settingsDlg" hidden>
+  <div class="dialog">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="settingsTitle"></span><span class="stripes"></span>
+      <button class="nt-btn nt-tbtn danger" data-close>×</button></header>
+    <div class="dlg-body settings-body">
+      <fieldset class="nt-fieldset">
+        <legend data-i18n="destFolder"></legend>
+        <div class="row"><input class="nt-input grow" id="setDest" readonly><button class="nt-btn" id="btnDest"><span data-i18n="change"></span></button></div>
+      </fieldset>
+      <fieldset class="nt-fieldset">
+        <legend data-i18n="skin"></legend>
+        <div class="skin-picker" id="skinPicker">
+          <button class="nt-btn skin-opt" data-skin="winamp"><i class="sw sw-winamp"></i><span data-i18n="skinWinamp"></span></button>
+          <button class="nt-btn skin-opt" data-skin="chrome"><i class="sw sw-chrome"></i><span data-i18n="skinChrome"></span></button>
+          <button class="nt-btn skin-opt" data-skin="luna"><i class="sw sw-luna"></i><span data-i18n="skinLuna"></span></button>
+        </div>
+      </fieldset>
+      <div class="two-col">
+        <fieldset class="nt-fieldset">
+          <legend data-i18n="language"></legend>
+          <select class="nt-select" id="setLang"><option value="es">Español</option><option value="en">English</option></select>
+        </fieldset>
+        <fieldset class="nt-fieldset">
+          <legend data-i18n="network"></legend>
+          <div class="net-info" id="netInfo"></div>
+        </fieldset>
+      </div>
+      <fieldset class="nt-fieldset">
+        <label class="nt-check"><input type="checkbox" id="setAutostart"><span data-i18n="autostart"></span></label>
+        <label class="nt-check"><input type="checkbox" id="setTray"><span data-i18n="closeToTray"></span></label>
+      </fieldset>
+      <fieldset class="nt-fieldset" id="aboutBox">
+        <legend data-i18n="about"></legend>
+        <div class="about"><b>N-Transfer</b> <span id="version"></span> · MIT ·
+          <a href="#" id="repoLink">github.com/Nyra31/N-Transfer</a></div>
+      </fieldset>
+      <div class="dlg-actions"><button class="nt-btn" data-close><span data-i18n="ok"></span></button></div>
+    </div>
+  </div>
+</div>
+
+<div class="drop" id="drop"><div class="drop-inner nt-lcd"><span data-i18n="dropHere"></span></div></div>
+<div class="toast nt-lcd" id="toast" hidden></div>
+
+<script src="../shared/i18n.js"></script>
+<script src="../shared/viz.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

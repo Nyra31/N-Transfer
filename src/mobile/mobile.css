@@ -1,0 +1,78 @@
+/* Distribución de la web app del móvil (táctil). Los colores vienen de la skin. */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--frame-bg);
+  background-attachment: fixed;
+  font-size: 15px;
+}
+.phone {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top) + 8px) 12px calc(env(safe-area-inset-bottom) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.m-title { height: 30px; font-size: 13px; border-radius: var(--m-title-radius, 0); }
+.m-title .nt-tbtn { width: 34px; height: 24px; font-size: 15px; }
+.skin-luna .m-title .nt-tbtn { width: 30px; height: 24px; }
+
+.m-lcd { padding: 8px 12px 6px; display: flex; flex-direction: column; gap: 4px; }
+.lcd-row { display: flex; justify-content: space-between; align-items: baseline; position: relative; z-index: 1; }
+.lcd-row.bottom { align-items: flex-end; }
+.led.on { animation: blink 0.8s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.lcd-speed { font-size: 24px; line-height: 1; }
+.lcd-speed small { font-size: 11px; }
+.marquee { font-size: 16px; white-space: pre; overflow: hidden; position: relative; z-index: 1; }
+.lcd-small { font-size: 11px; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#viz { width: 150px; height: 26px; }
+.m-seek { height: 8px; }
+
+.view { display: flex; flex-direction: column; gap: 10px; }
+.panel { background: var(--panel-bg); padding: 16px; display: flex; flex-direction: column; gap: 12px; border-radius: var(--fieldset-radius, 0); }
+.panel h2 { margin: 0; font-size: 17px; }
+.panel p { margin: 0; line-height: 1.5; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.field .nt-input { font-size: 17px; padding: 10px; }
+.msg { color: var(--text-dim); font-size: 13px; }
+
+.nt-btn.big { min-height: 54px; font-size: 16px; font-weight: bold; width: 100%; padding: 10px 14px; }
+.nt-btn.big .ico { font-size: 14px; }
+.nt-btn.small { min-height: 30px; font-size: 13px; padding: 4px 12px; }
+.send-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.send-btns .nt-btn.big { min-height: 76px; flex-direction: column; gap: 4px; white-space: normal; text-align: center; }
+.send-btns input { display: none; }
+.keep-open { margin: 0; text-align: center; font-size: 12px; color: var(--text-dim); }
+
+.install { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel-bg); font-size: 13px; line-height: 1.4; border-radius: var(--fieldset-radius, 0); }
+.install span { flex: 1; }
+
+.section-title { display: flex; justify-content: space-between; align-items: baseline; font-weight: bold; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-top: 6px; }
+.section-title span:last-child { font-weight: normal; color: var(--text-dim); text-transform: none; letter-spacing: 0; font-size: 12px; }
+.m-list { font-size: 14px; max-height: none; border-radius: var(--fieldset-radius, 0); }
+.m-list:empty { display: none; }
+.m-list li { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; padding: 9px 10px; }
+.m-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-list .state { font-size: 12px; white-space: nowrap; }
+.m-list .state.ok { color: var(--list-active); }
+.m-list .state.err { color: #e0352b; }
+.m-list .nt-progress { grid-column: 1 / 3; height: 6px; }
+.m-list .nt-btn { min-height: 34px; padding: 4px 14px; font-size: 13px; text-decoration: none; }
+.empty { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+
+.sheet { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .5); display: flex; align-items: flex-end; justify-content: center; }
+.sheet-inner {
+  width: 100%; max-width: 560px; background: var(--frame-bg); border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 var(--frame-hi); padding-bottom: env(safe-area-inset-bottom);
+}
+.sheet-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.skin-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.skin-row .nt-btn { flex: 1; min-height: 40px; font-size: 13px; white-space: normal; }
+.skin-row .nt-btn.active { background: var(--btn-press); box-shadow: inset 1px 1px 3px rgba(0,0,0,.5); font-weight: bold; }
+.pc-info { margin: 0; font-size: 12px; color: var(--text-dim); text-align: center; }
+.skin-luna { --m-title-radius: 7px 7px 0 0; }

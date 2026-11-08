@@ -1,0 +1,114 @@
+/* Distribución de la ventana del PC. Los colores vienen de la skin. */
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--frame-bg); font-size: 12px; user-select: none; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--frame-bg);
+  border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 var(--frame-hi);
+}
+.main-title { -webkit-app-region: drag; border-radius: 0 !important; flex-shrink: 0; }
+.main-title .title { padding: 0 4px; }
+.no-drag, .main-title button { -webkit-app-region: no-drag; }
+
+/* ── Bloque superior (LCD + controles) ── */
+.deck { padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 7px; flex-shrink: 0; }
+.lcd { height: 98px; padding: 6px 10px 5px; display: flex; flex-direction: column; justify-content: space-between; }
+.lcd-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; position: relative; z-index: 1; }
+.lcd-status { font-size: 12px; letter-spacing: 1px; }
+.led { display: inline-block; transition: opacity .2s; }
+.led.on { animation: blink 0.8s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.lcd-speed { font-size: 26px; letter-spacing: 1px; line-height: 1; }
+.lcd-speed small { font-size: 11px; }
+.marquee { font-size: 15px; white-space: pre; overflow: hidden; position: relative; z-index: 1; letter-spacing: .5px; }
+.lcd-row.bottom { align-items: flex-end; }
+#viz { width: 190px; height: 34px; image-rendering: pixelated; }
+.lcd-stats { font-size: 11px; white-space: nowrap; }
+
+.seek { height: 9px; }
+.controls { display: grid; grid-template-columns: 1fr 1.25fr 1fr auto; gap: 6px; }
+.controls .nt-btn { height: 30px; }
+
+/* ── Lista (playlist) ── */
+.playlist { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 8px 8px; gap: 6px; }
+.tabs { display: flex; gap: 4px; }
+.tab { flex: 1; min-height: 24px; font-size: 11px; }
+.tab.active { background: var(--btn-press); box-shadow: inset 1px 1px 3px rgba(0,0,0,.5); font-weight: bold; }
+.badge:empty { display: none; }
+.badge { font-size: 10px; opacity: .8; }
+.pl-body { flex: 1; min-height: 0; position: relative; background: var(--list-bg); }
+#list { position: absolute; inset: 0; outline: none; }
+#list li { display: grid; grid-template-columns: 26px 14px 1fr auto; gap: 6px; align-items: center; }
+#list li .num { text-align: right; opacity: .8; }
+#list li .dir { text-align: center; font-size: 10px; }
+#list li .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#list li .meta { white-space: nowrap; font-size: 11px; }
+#list li .sub { grid-column: 3 / 5; font-size: 10px; margin-top: -2px; }
+#list li .nt-progress { grid-column: 3 / 5; height: 6px; margin: 1px 0 2px; }
+#list li .row-btn { min-height: 18px; padding: 0 6px; font-size: 10px; }
+.empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  text-align: center; white-space: pre-line; color: var(--list-dim); padding: 20px; pointer-events: none; line-height: 1.6;
+}
+.pl-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; }
+.pl-summary { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.pl-actions .nt-btn { min-height: 22px; font-size: 11px; padding: 2px 10px; }
+
+/* Plegado (shade): solo título + LCD */
+body.shaded .playlist, body.shaded .controls, body.shaded .seek { display: none; }
+
+/* ── Diálogos ── */
+.overlay {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45); padding: 14px;
+}
+.dialog {
+  width: 100%; max-width: 420px; max-height: 100%; display: flex; flex-direction: column;
+  background: var(--frame-bg); border: 1px solid var(--frame-lo);
+  box-shadow: inset 1px 1px 0 var(--frame-hi), 4px 4px 0 rgba(0,0,0,.35);
+}
+.dlg-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.dlg-actions .nt-btn { min-width: 84px; }
+
+.pair-body { align-items: stretch; }
+.qr-frame { align-self: center; background: #fff; padding: 6px; line-height: 0; }
+.qr-frame img { width: 220px; height: 220px; image-rendering: pixelated; }
+.steps { margin: 0; padding-left: 20px; line-height: 1.55; }
+.pair-url { padding: 6px 8px; font-size: 11px; word-break: break-all; user-select: text; }
+
+.settings-body .row { display: flex; gap: 6px; }
+.grow { flex: 1; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.two-col .nt-select { width: 100%; }
+.net-info { font-size: 11px; line-height: 1.5; user-select: text; word-break: break-all; }
+.settings-body .nt-check + .nt-check { margin-top: 6px; }
+.skin-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.skin-opt { flex-direction: column; height: auto; padding: 6px 4px; font-size: 11px; white-space: normal; text-align: center; }
+.skin-opt.active { background: var(--btn-press); box-shadow: inset 1px 1px 3px rgba(0,0,0,.5); font-weight: bold; }
+.sw { display: block; width: 100%; height: 26px; border: 1px solid rgba(0,0,0,.5); }
+.sw-winamp { background: linear-gradient(180deg, #3f4055 0 30%, #000 30% 100%); box-shadow: inset 0 -8px 0 #000, inset 0 -10px 0 #00e600; }
+.sw-chrome { background: linear-gradient(180deg, #f1f3f6 0 30%, #0d2a55 30% 100%); box-shadow: inset 0 -10px 0 #0d2a55, inset 0 -12px 0 #86dcff; border-radius: 6px; }
+.sw-luna { background: linear-gradient(180deg, #0055ea 0 30%, #ece9d8 30% 100%); box-shadow: inset 0 -6px 0 #ece9d8, inset 0 -10px 0 #2ebd2e; }
+.about { line-height: 1.6; }
+.about a { color: inherit; }
+
+/* ── Soltar archivos ── */
+.drop {
+  position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55); pointer-events: none;
+}
+body.dragging .drop { display: flex; }
+.drop-inner { padding: 22px 26px; font-size: 16px; border: 2px dashed var(--lcd-fg); }
+
+.toast {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 40;
+  padding: 8px 14px; font-size: 13px; max-width: 90%;
+}
