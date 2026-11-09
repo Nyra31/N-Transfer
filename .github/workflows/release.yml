@@ -1,8 +1,11 @@
 name: Release
 
-# - Al subir una etiqueta vX.Y.Z: pruebas + instaladores de Windows, macOS y Linux publicados en GitHub Releases.
-#   Las notas salen de release-notes/vX.Y.Z.md si existe.
-# - A mano (Actions → Release → Run workflow): pruebas + instaladores como artefactos, SIN publicar nada.
+# Etiqueta vX.Y.Z → borrador de release → en Windows, macOS y Linux: pruebas, compilar, arrancar la app
+# empaquetada (prueba de humo) y subir sus archivos → si los tres van bien, se publica la release.
+# Si algo falla, la release se queda en borrador: no la ve nadie, ni el actualizador automático.
+#
+# Ejecución manual (Actions → Release → Run workflow): lo mismo pero sin publicar; los instaladores
+# quedan como artefactos de la ejecución durante 7 días.
 on:
   push:
     tags: ['v*']
@@ -12,14 +15,12 @@ permissions:
   contents: write
 
 jobs:
-  # La release se crea antes de compilar: si la crea electron-builder desde tres sistemas a la vez,
-  # salen releases duplicadas con la misma etiqueta.
-  create-release:
+  draft:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Crear la release
+      - name: Crear la release en borrador
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -27,20 +28,23 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then echo "La release $TAG ya existe"; exit 0; fi
           NOTES="release-notes/$TAG.md"
           if [ -f "$NOTES" ]; then
-            gh release create "$TAG" --title "N-Transfer ${TAG#v}" --notes-file "$NOTES"
+            gh release create "$TAG" --draft --title "N-Transfer ${TAG#v}" --notes-file "$NOTES"
           else
-            gh release create "$TAG" --title "N-Transfer ${TAG#v}" --generate-notes
+            gh release create "$TAG" --draft --title "N-Transfer ${TAG#v}" --generate-notes
           fi
 
   build:
-    needs: create-release
-    # Si no hay etiqueta (ejecución manual), create-release se salta y aun así se compila
-    if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    needs: draft
+    # En la ejecución manual no hay borrador (se salta) y aun así se compila
+    if: always() && (needs.draft.result == 'success' || needs.draft.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     env:
       # Sin certificados: macOS usa firma ad hoc (mac.identity "-"), Windows va sin firmar
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -53,17 +57,23 @@ jobs:
       - run: npm ci
       - name: Pruebas del núcleo
         run: npm test
-      - name: Compilar y publicar
+      - name: Compilar
+        run: npx electron-builder --publish never
+      - name: Prueba de humo (arrancar la app empaquetada)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a npm run smoke; else npm run smoke; fi
+      - name: Subir a la release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compilar sin publicar
+        run: |
+          shopt -s nullglob
+          files=(dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.blockmap dist/latest*.yml)
+          printf 'subiendo %s\n' "${files[@]}"
+          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+      - name: Guardar instaladores (ejecución manual)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: npx electron-builder --publish never
-      - name: Guardar instaladores (solo ejecución manual)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: n-transfer-${{ matrix.os }}
           retention-days: 7
@@ -73,4 +83,14 @@ jobs:
             dist/*.zip
             dist/*.AppImage
             dist/*.deb
-            dist/*.yml
+            dist/latest*.yml
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publicar la release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest

@@ -20,6 +20,7 @@
     "icons": "node scripts/electron.js scripts/make-icons.js",
     "test": "node scripts/test-core.js",
     "shots": "node scripts/shots.js",
+    "smoke": "node scripts/smoke-packaged.js",
     "dist": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux"
