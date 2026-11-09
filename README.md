@@ -14,8 +14,15 @@ Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi‑Fi, sin cables, 
 
 **Consejo:** añade N-Transfer a la pantalla de inicio del móvil. En iPhone: *Compartir → Añadir a pantalla de inicio*. En Android: *⋮ → Añadir a pantalla de inicio*.
 
-> La primera vez, Windows preguntará si permites a N-Transfer usar la red: acepta para **redes privadas**.
-> El instalador no está firmado: si aparece SmartScreen, pulsa *Más información → Ejecutar de todas formas*.
+### Instalar
+
+| Sistema | Descarga | Notas |
+|---|---|---|
+| **Windows 10/11** | `N-Transfer-Setup-X.Y.Z.exe` | No está firmado: si aparece SmartScreen, *Más información → Ejecutar de todas formas*. El instalador pide permiso de administrador una vez para el firewall. |
+| **macOS 11+** (Intel y Apple Silicon) | `N-Transfer-X.Y.Z-mac.dmg` | Arrastra N-Transfer a Aplicaciones. Al no estar firmada por Apple, la primera vez: clic derecho sobre la app → **Abrir** → Abrir (o *Ajustes del Sistema → Privacidad y seguridad → Abrir igualmente*). Acepta el permiso de **red local**. Las actualizaciones se avisan en la app y se descargan a mano. |
+| **Linux** (x64) | `.AppImage` o `.deb` | AppImage: `chmod +x N-Transfer-*.AppImage` y ábrelo. Debian/Ubuntu: `sudo apt install ./N-Transfer-*.deb`. En GNOME, el icono de la bandeja necesita la extensión *AppIndicator*. |
+
+> Para emparejar, la ventana **Emparejar** del PC tiene que estar abierta: el PC no acepta móviles nuevos en ningún otro momento.
 
 ## Funciones
 
@@ -59,9 +66,10 @@ Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi‑Fi, sin cables, 
 | Plataforma | Estado |
 |---|---|
 | Windows 10/11 | ✅ |
+| macOS (universal) | ✅ compila y arranca en las pruebas automáticas; sin firma de Apple |
+| Linux x64 (AppImage, .deb) | ✅ compila y arranca en las pruebas automáticas |
 | iPhone / iPad (web app) | ✅ |
 | Android (web app) | ✅ debería funcionar igual (por probar) |
-| macOS / Linux (escritorio) | 🛠️ configurado en `electron-builder`, falta probarlo |
 | Apps nativas iOS / Android | 📋 planificadas: usarán la API `/api/v1` |
 
 ## Desarrollo
@@ -74,7 +82,8 @@ npm start          # ejecutar en modo desarrollo
 npm test           # pruebas del servidor (HEIC_SAMPLE=foto.heic para probar también la conversión)
 npm run shots      # prueba de punta a punta con la app real + capturas en ./shots
 npm run icons      # regenerar los iconos desde el SVG
-npm run dist       # crear el instalador de Windows en ./dist
+npm run dist       # crear el instalador de Windows en ./dist  (dist:mac / dist:linux en esos sistemas)
+npm run smoke      # arrancar la app ya empaquetada y comprobar que funciona
 ```
 
 ### Estructura
@@ -115,8 +124,10 @@ Autenticación: cabecera `X-Device-Token` o parámetro `?d=`.
 
 ```bash
 npm version patch          # o minor / major
-git push --follow-tags     # GitHub Actions compila y publica el instalador en Releases
+git push --follow-tags     # GitHub Actions prueba, compila y publica para Windows, macOS y Linux
 ```
+
+Antes, `release-notes/vX.Y.Z.md` con las notas. La release se crea en borrador y solo se publica si las pruebas y la app empaquetada funcionan en los tres sistemas. Para compilar sin publicar: *Actions → Release → Run workflow*.
 
 ## Licencia
 
