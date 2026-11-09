@@ -3,7 +3,7 @@
 App de escritorio (Electron) para pasar fotos, vídeos, archivos y texto entre el móvil y el PC por Wi‑Fi, con skins al estilo de los reproductores de los 2000. El móvil usa una web app que sirve el propio PC (sin app nativa todavía).
 
 - Repo público: https://github.com/Nyra31/N-Transfer (MIT). Usuario de GitHub: **Nyra31** (`gh` ya autenticado).
-- Versión publicada: **0.3.0** (Windows). **0.4.0** preparada (añade macOS y Linux): pendiente de que el usuario confirme la publicación.
+- Versión publicada: **0.4.0** (10-11-2026): Windows, macOS y Linux.
 - Plataformas: Windows (NSIS), macOS (dmg/zip universal, firma ad hoc), Linux (AppImage, deb). Auto-update con electron-updater salvo en macOS (sin firma de Apple no se puede: se avisa y se descarga a mano).
 - Idioma del proyecto: **español** (código comentado en español, UI en español e inglés). Habla con el usuario en español.
 - La carpeta local sigue llamándose `ios-transfer`; el usuario quería renombrarla a `n-transfer` (VS Code la bloqueaba). Si se renombra, no cambia nada del código.
