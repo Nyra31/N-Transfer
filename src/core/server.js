@@ -55,6 +55,8 @@ const MAX_THUMB = 300 * 1024;
 const STALE_UPLOAD_MS = 48 * 3600 * 1000;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const MAX_PAIR_FAILURES = 10;
+const PAIRING_WINDOW_MS = 10 * 60 * 1000;
+const DISK_MARGIN = 100 * 1048576; // no llenar el disco hasta el último byte
 const normalizeCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const TYPE_FOLDERS = { es: { photo: 'Fotos', video: 'Vídeos', other: 'Otros' }, en: { photo: 'Photos', video: 'Videos', other: 'Other' } };
 
@@ -129,6 +131,8 @@ class TransferServer extends EventEmitter {
     this.peers = peers || (() => []);
     if (!store.get('pcId')) store.set('pcId', crypto.randomUUID());
     this.lastContact = null; // última petición desde otro dispositivo de la red (para el asistente «No conecta»)
+    // El emparejamiento solo se acepta con la ventana «Emparejar» abierta (y como mucho unos minutos).
+    this.pairingUntil = 0;
     this.port = store.get('port');
     this.clients = new Set();
     this.reserved = new Set();
@@ -161,6 +165,14 @@ class TransferServer extends EventEmitter {
     return `http://${this.ip}:${this.port}/pair?c=${this.pairCode}`;
   }
   /** Código de 8 caracteres sin ambigüedades (sin 0/O, 1/I/L), fácil de escribir a mano. */
+  /** Abre o cierra el emparejamiento. Abierto caduca solo a los `ms` milisegundos. */
+  setPairing(open, ms = PAIRING_WINDOW_MS) {
+    this.pairingUntil = open ? Date.now() + ms : 0;
+  }
+  get pairingOpen() {
+    return Date.now() < this.pairingUntil;
+  }
+
   newPairCode() {
     const bytes = crypto.randomBytes(8);
     this.pairCode = Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
@@ -451,12 +463,14 @@ class TransferServer extends EventEmitter {
       cors(res);
       return json(res, 200, {
         app: 'N-Transfer', api: 1, version: this.version, id: this.pcId, name: this.pcLabel, host: this.mdnsHost, port: this.port,
+        pairing: this.pairingOpen,
       });
     }
 
     if (p === '/api/v1/pair' && req.method === 'POST') {
       cors(res);
       const body = await readJson(req);
+      if (!this.pairingOpen) return json(res, 403, { error: 'pairing_closed' });
       if (!body || normalizeCode(body.code) !== this.pairCode) {
         // Contra fuerza bruta: tras varios intentos fallidos el código se renueva.
         if (++this.pairFailures >= MAX_PAIR_FAILURES) this.newPairCode();
@@ -629,12 +643,14 @@ class TransferServer extends EventEmitter {
     // ¿El mismo archivo ya estaba a medias? Se reanuda en vez de empezar de cero.
     const existing = [...this.sessions.values()].find((x) => x.deviceId === dev.id && x.fp === fp);
     if (existing) {
+      await this.ensureSpace(path.dirname(existing.finalPath), existing.size - existing.received, existing.name);
       if (existing.state !== 'paused') this.setUploadState(existing, 'stalled');
       return existing;
     }
     const kind = kindOf(clean, type);
     const dir = this.dirFor(kind);
     await fsp.mkdir(dir, { recursive: true });
+    await this.ensureSpace(dir, size, clean);
     const finalName = await this.uniqueName(dir, clean);
     const id = crypto.randomUUID();
     const finalPath = path.join(dir, finalName);
@@ -651,6 +667,24 @@ class TransferServer extends EventEmitter {
     this.persistSessions();
     this.emit('transfer-start', this.sessionInfo(s));
     return s;
+  }
+
+  /** Avisa antes de empezar si el archivo no cabe (en vez de fallar a mitad de un vídeo de varios GB). */
+  async ensureSpace(dir, bytes, name) {
+    const free = await this.freeSpace(dir);
+    if (free === null || bytes + DISK_MARGIN <= free) return;
+    this.emit('disk-full', { name, size: bytes, free, dir });
+    throw Object.assign(new Error('no_space'), { status: 507 });
+  }
+
+  async freeSpace(dir) {
+    if (typeof this.freeSpaceOverride === 'function') return this.freeSpaceOverride(dir); // pruebas
+    try {
+      const st = await fsp.statfs(dir);
+      return st.bavail * st.bsize;
+    } catch {
+      return null; // si no se puede saber, no se bloquea
+    }
   }
 
   getUpload(res, dev, id) {

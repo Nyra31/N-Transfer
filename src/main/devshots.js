@@ -224,6 +224,65 @@ module.exports = async function devshots({ app, win, server, store, send, viewer
       check('subida grande desde el móvil (para pausa remota)', false, 'no apareció');
     }
 
+    // ── Emparejamiento: solo con la ventana «Emparejar» abierta ──
+    await win.webContents.executeJavaScript(`document.querySelectorAll('.overlay').forEach((d) => (d.hidden = true))`);
+    await wait(300);
+    check('emparejamiento cerrado con la ventana cerrada', !server.pairingOpen);
+    const closedTry = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-closed' } });
+    await closedTry.loadURL(`http://127.0.0.1:${port}/pair?c=${server.pairCode}`);
+    await wait(500);
+    await closedTry.webContents.executeJavaScript(`document.getElementById('btnPair').click()`);
+    await wait(1200);
+    const closedMsg = await closedTry.webContents.executeJavaScript(`document.getElementById('pairMsg').textContent`);
+    check('el móvil explica que hay que abrir «Emparejar» en el PC', /Emparejar/.test(closedMsg), closedMsg);
+    closedTry.destroy();
+
+    send('open-pair');
+    await wait(500);
+    check('la ventana «Emparejar» abre el emparejamiento', server.pairingOpen);
+    // Desde la página del QR (como Safari): tras emparejar, la página se recarga con el token
+    const safari = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-safari' } });
+    await safari.loadURL(`http://127.0.0.1:${port}/pair?c=${server.pairCode}`);
+    await wait(500);
+    await safari.webContents.executeJavaScript(`document.getElementById('btnPair').click()`);
+    await wait(2500);
+    const after = await safari.webContents.executeJavaScript(
+      `({ url: location.href, manifest: document.getElementById('manifest').getAttribute('href'),
+          view: ['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden) })`);
+    check('emparejar desde el QR deja el token en la URL y en el manifest',
+      after.view === 'viewMain' && /[?&]d=/.test(after.url) && /\?d=/.test(after.manifest), `${after.view} ${after.manifest.replace(/d=.*/, 'd=…')}`);
+    safari.destroy();
+    check('tras emparejar, la ventana se cierra y el emparejamiento también', !server.pairingOpen);
+    send('open-pair'); // para el siguiente móvil hay que volver a abrirla
+    await wait(500);
+    // Desde la app de la pantalla de inicio (sin almacenamiento): escribiendo el código
+    const homeApp = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { partition: 'shots-home' } });
+    await homeApp.loadURL(`http://127.0.0.1:${port}/`);
+    await wait(800);
+    await homeApp.webContents.executeJavaScript(`(() => { const i = document.getElementById('codeInput');
+      i.value = ${JSON.stringify(server.pairCodeDisplay.toLowerCase())}; i.dispatchEvent(new Event('input')); document.getElementById('btnCode').click(); })()`);
+    await wait(2500);
+    const viaCode = await homeApp.webContents.executeJavaScript(`['viewPair','viewNone','viewMain'].find((v) => !document.getElementById(v).hidden)`);
+    check('emparejar escribiendo el código (app de inicio)', viaCode === 'viewMain', viaCode);
+    homeApp.destroy();
+    await win.webContents.executeJavaScript(`document.getElementById('pairDlg').hidden = true`);
+    await wait(300);
+    check('al cerrar «Emparejar» se cierra el emparejamiento', !server.pairingOpen);
+
+    // ── Sin espacio en el disco ──
+    server.freeSpaceOverride = () => 120 * 1048576;
+    await mobile.webContents.executeJavaScript(`(() => {
+      const file = new File([new Uint8Array(64 * 1048576)], 'no-cabe.mov', { type: 'video/quicktime' });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const input = document.getElementById('pickFiles'); input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    await wait(1500);
+    const full = await mobile.webContents.executeJavaScript(`[...document.querySelectorAll('#queue li')].map((li) => li.querySelector('.name').textContent + ':' + li.querySelector('.state').textContent).find((x) => x.startsWith('no-cabe'))`);
+    check('sin espacio: el móvil lo dice y no reintenta', /Sin espacio/.test(full || ''), full);
+    await capture(win, path.join(out, 'pc-disk-full.png'));
+    server.freeSpaceOverride = null;
+
     // ── Varios PCs: un segundo servidor en la «red» al que el móvil se empareja desde el menú ──
     const { Store } = require('../core/store');
     const { TransferServer } = require('../core/server');
@@ -237,6 +296,7 @@ module.exports = async function devshots({ app, win, server, store, send, viewer
     });
     await pc2.start();
     pc2.addTextToOutbox('Hola desde el PC del trabajo');
+    pc2.setPairing(true); // en el otro PC, el usuario tendría abierta su ventana «Emparejar»
     server.peers = () => [{ id: pc2.pcId, name: 'Trabajo', ip: '127.0.0.1', port: P2, host: 'trabajo.local', version: 'test' }];
     await mobile.webContents.executeJavaScript(`(async () => {
       window.prompt = () => ${JSON.stringify(pc2.pairCodeDisplay)};
@@ -300,13 +360,16 @@ module.exports = async function devshots({ app, win, server, store, send, viewer
     await win.webContents.executeJavaScript(`document.querySelectorAll('.overlay').forEach((d) => (d.hidden = true))`);
     await wait(300);
     const found = await win.webContents.executeJavaScript(`(async () => {
+      document.querySelector('.tab[data-tab="transfers"]').click(); // por si llegó tarde otro «show-tab»
       const s = document.getElementById('search'); s.value = 'img_042'; s.dispatchEvent(new Event('input'));
       await new Promise((r) => requestAnimationFrame(r));
       const rows = document.querySelectorAll('#list li:not(.active)');
       rows[0].click();
       rows[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
       await new Promise((r) => setTimeout(r, 100));
-      return { rows: rows.length, summary: document.getElementById('summary').textContent,
+      return { rows: rows.length, names: [...rows].map((r) => r.querySelector('.name').textContent + '|' + r.className),
+               overlays: [...document.querySelectorAll('.overlay')].filter((d) => !d.hidden).map((d) => d.id),
+               summary: document.getElementById('summary').textContent,
                actions: [...document.querySelectorAll('#actions button')].map((b) => b.textContent) };
     })()`);
     check('búsqueda + selección múltiple', found.rows === 3 && /2 seleccionados/.test(found.summary) && found.actions.includes('Papelera'), JSON.stringify(found));

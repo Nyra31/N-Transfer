@@ -6,7 +6,7 @@ const CHANNELS = new Set([
   'outbox-remove', 'outbox-clear', 'device-forget', 'pair-new', 'open-folder', 'item-menu', 'open-entry', 'entries',
   'main-menu', 'win', 'history-clear', 'stats-reset', 'update-install', 'open-external', 'clipboard-read',
   'clipboard-write', 'transfer', 'skins-folder', 'skin-save', 'skin-delete', 'diagnostics', 'firewall-add',
-  'open-network-settings', 'viewer-state', 'viewer-src', 'viewer-win', 'viewer-file',
+  'open-network-settings', 'pairing', 'open-log', 'viewer-state', 'viewer-src', 'viewer-win', 'viewer-file',
 ]);
 
 contextBridge.exposeInMainWorld('nt', {

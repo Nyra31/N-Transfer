@@ -261,6 +261,15 @@
       mForgetPc: 'Olvidar',
       mPaired: 'Emparejado',
       mThisPc: 'este PC',
+      // v0.4
+      downloadUpdate: 'Descargar la versión {version}',
+      updateAvailable: 'Versión {version} disponible *** Descárgala desde el menú',
+      diskFullTitle: 'Sin espacio en el PC',
+      diskFull: 'No cabe «{name}»: solo quedan {free} libres en el disco.',
+      openLog: 'Abrir registro',
+      openLogHint: 'Si algo falla, el registro ayuda a saber qué ha pasado. No guarda contraseñas ni el contenido de los archivos.',
+      mPairClosed: 'En el PC, abre «Emparejar» y vuelve a intentarlo.',
+      mNoSpace: 'Sin espacio en el PC',
     },
     en: {
       appName: 'N-Transfer',
@@ -512,6 +521,14 @@
       mForgetPc: 'Forget',
       mPaired: 'Paired',
       mThisPc: 'this PC',
+      downloadUpdate: 'Download version {version}',
+      updateAvailable: 'Version {version} available *** Download it from the menu',
+      diskFullTitle: 'No space on the PC',
+      diskFull: '"{name}" does not fit: only {free} left on the disk.',
+      openLog: 'Open log',
+      openLogHint: 'If something fails, the log helps to find out what happened. It does not store passwords or file contents.',
+      mPairClosed: 'On the PC, open "Pair" and try again.',
+      mNoSpace: 'No space on the PC',
     },
   };
 

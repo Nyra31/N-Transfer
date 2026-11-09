@@ -397,6 +397,7 @@
     active++;
     item.state = 'preparing';
     item.note = '';
+    item.btnKey = null;
     renderItemState(item);
     const pc = item.pc;
     try {
@@ -435,6 +436,7 @@
     } catch (e) {
       if (item.state === 'paused' || item.state === 'cancelled') return;
       if (e.fatal) { item.state = 'error'; return; }
+      if (e.status === 507) { item.state = 'error'; item.note = t('mNoSpace'); return; } // no cabe: reintentar no sirve
       if (e.status === 423) { item.state = 'paused'; return; }
       if (e.status === 410) return markCancelled(item);
       if (e.status === 409) { item.state = 'queued'; return; } // el PC nos dice el offset bueno: se reintenta ya
@@ -769,15 +771,15 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, name: guessName(), platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
       });
-      if (!r.ok) throw new Error('bad_code');
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'bad_code');
       const { token } = await r.json();
       pcs[peer.id] = { id: peer.id, name: peer.name, base, token };
       savePcs();
       connect(pcs[peer.id]);
       setTarget(peer.id);
       renderPcList();
-    } catch {
-      alert(t('mCodeError'));
+    } catch (e) {
+      alert(e.message === 'pairing_closed' ? t('mPairClosed') : t('mCodeError'));
     }
   }
 
@@ -799,12 +801,12 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, name, platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
       });
-      if (!r.ok) throw new Error('bad_code');
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'bad_code');
       HOME.token = (await r.json()).token;
       LS.set('nt-token', HOME.token);
       await goHome();
-    } catch {
-      msg.textContent = t(errorKey);
+    } catch (e) {
+      msg.textContent = e.message === 'pairing_closed' ? t('mPairClosed') : t(errorKey);
       btn.disabled = false;
     }
   }

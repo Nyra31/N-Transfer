@@ -26,6 +26,11 @@ const WIDTH = 480;
 const MINI_WIDTH = 340;
 
 if (process.env.NT_USER_DATA) app.setPath('userData', process.env.NT_USER_DATA);
+const log = require('./log');
+log.init(path.join(app.getPath('userData'), 'logs'));
+// Un error inesperado se registra en vez de cerrar la app con un diálogo de error.
+process.on('uncaughtException', (e) => log.error('uncaughtException', e));
+process.on('unhandledRejection', (e) => log.error('unhandledRejection', e));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -34,6 +39,8 @@ if (!app.requestSingleInstanceLock()) {
     showWindow();
     handleSendArgs(argv);
   });
+  // macOS: clic en el icono del Dock con la ventana oculta
+  app.on('activate', () => showWindow());
   app.whenReady().then(init);
 }
 app.setAppUserModelId('com.nyra31.ntransfer');
@@ -47,6 +54,8 @@ let viewer = null;
 let serverError = null;
 let quitting = false;
 let updateReady = false;
+let updateAvailable = null; // macOS sin firmar: se avisa y se descarga a mano
+const RELEASES_URL = 'https://github.com/Nyra31/N-Transfer/releases/latest';
 let viewMode = 'normal'; // normal | shade | mini
 let fullHeight = 620;
 const batch = { count: 0, timer: null };
@@ -105,12 +114,15 @@ async function init() {
     peers: () => mdns.list(),
   });
   wireServerEvents();
+  log.info(`N-Transfer ${app.getVersion()} · ${process.platform} ${process.arch} · Electron ${process.versions.electron}`);
   try {
     await server.start();
+    log.info(`servidor en el puerto ${server.port} · IP ${server.ip} · ${server.mdnsHost}`);
     mdns.advertise({ id: server.pcId, name: server.pcLabel, port: server.port, version: app.getVersion() });
     mdns.browse(server.pcId, () => {});
   } catch (e) {
     serverError = e.code === 'EADDRINUSE' ? t('serverError', { port: server.port }) : e.message;
+    log.error('no se pudo arrancar el servidor:', e.code || '', e.message);
   }
 
   viewer = createViewer({
@@ -284,6 +296,7 @@ function refreshTrayMenu() {
     { label: t('alwaysOnTop'), type: 'checkbox', checked: store.get('alwaysOnTop'), click: (i) => setAlwaysOnTop(i.checked) },
     { label: t('autostart'), type: 'checkbox', checked: autostart.get(), click: (i) => setAutostart(i.checked) },
     ...(updateReady ? [{ label: t('restartUpdate'), click: installUpdate }] : []),
+    ...(updateAvailable ? [{ label: t('downloadUpdate', { version: updateAvailable }), click: () => shell.openExternal(RELEASES_URL) }] : []),
     { type: 'separator' },
     { label: t('trayQuit'), click: quit },
   ]));
@@ -347,6 +360,16 @@ function wireServerEvents() {
   });
   server.on('stats-changed', (s) => send('stats', s));
   server.on('lan-contact', (c) => send('lan-contact', c));
+  server.on('disk-full', (e) => {
+    log.warn(`sin espacio para ${e.name}: hacen falta ${e.size} bytes, libres ${e.free} en ${e.dir}`);
+    send('disk-full', e);
+    if ((!win.isVisible() || win.isMinimized()) && Notification.isSupported()) {
+      new Notification({ title: t('diskFullTitle'), body: t('diskFull', { name: e.name, free: i18n.formatSize(e.free) }), icon: ICON }).show();
+    }
+  });
+  server.on('device-paired', (d) => log.info(`dispositivo emparejado: ${d.name} (${d.platform})`));
+  server.on('transfer-done', (e) => log.info(`${e.direction === 'in' ? 'recibido' : 'enviado'}: ${e.name} (${e.size} bytes) · ${e.device}${e.convertError ? ' · error HEIC: ' + e.convertError : ''}`));
+  server.on('transfer-error', (e) => log.warn(`transferencia fallida ${e.id}: ${e.error}`));
   server.on('devices-changed', (d) => send('devices', d));
   server.on('outbox-changed', (o) => send('outbox', o));
   server.on('history-changed', (h) => send('history', h));
@@ -429,6 +452,8 @@ ipcMain.handle('state', async () => ({
   platform: process.platform,
   serverError,
   updateReady,
+  updateAvailable,
+  firstRun: server.devices().length === 0,
 }));
 
 const BOOL_SETTINGS = new Set(['closeToTray', 'sounds', 'autoCopyText', 'splitByType']);
@@ -553,6 +578,9 @@ ipcMain.handle('device-forget', (_e, id) => server.forgetDevice(id));
 ipcMain.handle('pair-new', () => {
   server.newPairCode();
 });
+// La ventana «Emparejar» abre el emparejamiento mientras está visible (la interfaz lo renueva cada pocos minutos).
+ipcMain.handle('pairing', (_e, open) => server.setPairing(!!open));
+ipcMain.handle('open-log', () => log.file && shell.openPath(log.file));
 ipcMain.handle('open-folder', openDestFolder);
 ipcMain.handle('history-clear', () => server.clearHistory());
 ipcMain.handle('stats-reset', () => server.resetStats());
@@ -631,6 +659,7 @@ ipcMain.handle('main-menu', () => {
     { label: t('sounds'), type: 'checkbox', checked: store.get('sounds'), click: (i) => applySetting('sounds', i.checked) },
     { type: 'separator' },
     ...(updateReady ? [{ label: t('restartUpdate'), click: installUpdate }] : []),
+    ...(updateAvailable ? [{ label: t('downloadUpdate', { version: updateAvailable }), click: () => shell.openExternal(RELEASES_URL) }] : []),
     { label: t('about') + '…', click: () => send('open-settings', 'about') },
     { label: t('trayQuit'), click: quit },
   ]).popup({ window: win });
@@ -667,7 +696,18 @@ function setupUpdater() {
   if (!app.isPackaged) return;
   try {
     const { autoUpdater } = require('electron-updater');
-    autoUpdater.on('update-downloaded', () => {
+    // macOS solo deja instalar actualizaciones de apps firmadas por Apple: sin firma se avisa y se descarga a mano.
+    const manual = process.platform === 'darwin';
+    autoUpdater.autoDownload = !manual;
+    autoUpdater.on('update-available', (info) => {
+      log.info(`actualización disponible: ${info.version}`);
+      if (!manual) return;
+      updateAvailable = info.version;
+      send('update-available', { version: info.version, url: RELEASES_URL });
+      refreshTrayMenu();
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      log.info(`actualización descargada: ${info.version}`);
       updateReady = true;
       send('update-ready');
       refreshTrayMenu();

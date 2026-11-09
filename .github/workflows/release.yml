@@ -1,19 +1,22 @@
 name: Release
 
-# Al subir una etiqueta vX.Y.Z se compila el instalador y se publica en GitHub Releases.
-# Las notas salen de release-notes/vX.Y.Z.md si existe.
+# - Al subir una etiqueta vX.Y.Z: pruebas + instaladores de Windows, macOS y Linux publicados en GitHub Releases.
+#   Las notas salen de release-notes/vX.Y.Z.md si existe.
+# - A mano (Actions → Release → Run workflow): pruebas + instaladores como artefactos, SIN publicar nada.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  # La release se crea antes de compilar: si la crea electron-builder al subir varios archivos
-  # a la vez, a veces salen dos releases con la misma etiqueta.
+  # La release se crea antes de compilar: si la crea electron-builder desde tres sistemas a la vez,
+  # salen releases duplicadas con la misma etiqueta.
   create-release:
-    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Crear la release
@@ -31,11 +34,16 @@ jobs:
 
   build:
     needs: create-release
+    # Si no hay etiqueta (ejecución manual), create-release se salta y aun así se compila
+    if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     strategy:
+      fail-fast: false
       matrix:
-        # Para publicar también en Mac y Linux, añade: macos-latest, ubuntu-latest
-        os: [windows-latest]
+        os: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    env:
+      # Sin certificados: macOS usa firma ad hoc (mac.identity "-"), Windows va sin firmar
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -43,6 +51,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx electron-builder --publish always
+      - name: Pruebas del núcleo
+        run: npm test
+      - name: Compilar y publicar
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compilar sin publicar
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npx electron-builder --publish never
+      - name: Guardar instaladores (solo ejecución manual)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: n-transfer-${{ matrix.os }}
+          retention-days: 7
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.yml

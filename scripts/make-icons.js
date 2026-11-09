@@ -36,8 +36,17 @@ function logo({ full = false, tray = false } = {}) {
 </svg>`;
 }
 
+/** Icono «plantilla» de la barra de menús de macOS: solo negro + transparencia (macOS lo colorea). */
+function trayTemplate() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#000" d="M96 448V64h96l128 200V64h96v384h-96L192 248v200z"/>
+</svg>`;
+}
+
 const targets = [
-  { file: 'build/icon.png', size: 512 },
+  { file: 'build/icon.png', size: 1024 }, // macOS pide 1024; Windows y Linux lo reducen
+  { file: 'src/assets/trayTemplate.png', size: 16, svg: trayTemplate },
+  { file: 'src/assets/trayTemplate@2x.png', size: 32, svg: trayTemplate },
   { file: 'src/assets/icon.png', size: 256 },
   { file: 'src/assets/tray.png', size: 32, opts: { tray: true } },
   { file: 'src/mobile/icons/icon-192.png', size: 192 },
@@ -48,8 +57,8 @@ const targets = [
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false });
   await win.loadURL('data:text/html,<canvas id=c></canvas>');
-  for (const { file, size, opts } of targets) {
-    const svg = Buffer.from(logo(opts)).toString('base64');
+  for (const { file, size, opts, svg: custom } of targets) {
+    const svg = Buffer.from(custom ? custom() : logo(opts)).toString('base64');
     const dataUrl = await win.webContents.executeJavaScript(`new Promise((res) => {
       const img = new Image();
       img.onload = () => {

@@ -67,6 +67,7 @@ function stateLabel(a) {
 function marqueeText() {
   if (S.serverError) return S.serverError;
   if (S.updateReady) return t('updateReady');
+  if (S.updateAvailable && !S.active.size) return t('updateAvailable', { version: S.updateAvailable });
   const act = [...S.active.values()];
   if (act.length) {
     return act.map((a) => `${a.direction === 'in' ? '▼' : '▲'} ${a.name} (${stateLabel(a)}) - ${a.device}`).join('  ***  ');
@@ -433,6 +434,14 @@ function openPair() {
   $('pairCode').textContent = S.pair.code;
   $('pairDlg').hidden = false;
 }
+// El PC solo acepta emparejamientos mientras esta ventana está a la vista (se renueva cada 4 min).
+let pairingTimer = null;
+new MutationObserver(() => {
+  const open = !$('pairDlg').hidden;
+  clearInterval(pairingTimer);
+  window.nt.invoke('pairing', open);
+  if (open) pairingTimer = setInterval(() => window.nt.invoke('pairing', true), 4 * 60 * 1000);
+}).observe($('pairDlg'), { attributes: true, attributeFilter: ['hidden'] });
 
 async function openText(prefill) {
   const input = $('textInput');
@@ -616,6 +625,7 @@ document.querySelector('#settingsDlg').addEventListener('click', (e) => {
 });
 $('btnSkinsFolder').onclick = () => window.nt.invoke('skins-folder');
 $('btnStatsReset').onclick = () => window.nt.invoke('stats-reset');
+$('btnOpenLog').onclick = () => window.nt.invoke('open-log');
 $('repoLink').onclick = (e) => {
   e.preventDefault();
   window.nt.invoke('open-external', 'https://github.com/Nyra31/N-Transfer');
@@ -994,6 +1004,13 @@ window.nt.on((name, p) => {
     case 'update-ready':
       S.updateReady = true;
       break;
+    case 'update-available':
+      S.updateAvailable = p.version;
+      break;
+    case 'disk-full':
+      sound.play('error');
+      toast(t('diskFull', { name: p.name, free: formatSize(p.free) }));
+      break;
   }
   scheduleList();
   renderLcd();
@@ -1015,5 +1032,7 @@ window.nt.on((name, p) => {
   renderLcd();
   tickMarquee();
   if (S.settings.viewMode && S.settings.viewMode !== 'normal') setMode(S.settings.viewMode);
+  // Primera vez (ningún móvil emparejado): lo primero que hay que hacer es emparejar.
+  if (S.firstRun && !S.serverError) openPair();
   setInterval(() => !S.active.size && renderList(), 60000);
 })();

@@ -222,6 +222,7 @@ function putAndDrop(id, offset, data, sendBytes) {
     assert.equal(pre.status, 204);
     assert.equal(pre.headers.get('access-control-allow-origin'), '*');
     assert.match(pre.headers.get('access-control-allow-headers'), /X-Device-Token/i);
+    pc2.setPairing(true);
     const pr = await fetch(b2 + '/api/v1/pair', { method: 'POST', headers: { ...origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ code: pc2.pairCodeDisplay, name: 'iPhone' }) });
     assert.equal(pr.status, 200);
     assert.equal(pr.headers.get('access-control-allow-origin'), '*');
@@ -250,6 +251,50 @@ function putAndDrop(id, offset, data, sendBytes) {
     server.once('lan-contact', (c) => (seen = c));
     await fetch(`http://${lanIp}:${PORT}/api/v1/info`);
     assert.equal(seen?.ip, lanIp);
+  });
+
+  await test('emparejar solo con la ventana «Emparejar» abierta (y caduca)', async () => {
+    const tryPair = () => fetch(base + '/api/v1/pair', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: server.pairCodeDisplay, name: 'X' }),
+    });
+    server.setPairing(false);
+    let r = await tryPair();
+    assert.equal(r.status, 403);
+    assert.equal((await r.json()).error, 'pairing_closed');
+    assert.equal((await (await fetch(base + '/api/v1/info')).json()).pairing, false);
+    server.setPairing(true);
+    r = await tryPair();
+    assert.equal(r.status, 200);
+    server.setPairing(true, 50); // caduca a los 50 ms
+    await new Promise((res) => setTimeout(res, 80));
+    r = await tryPair();
+    assert.equal((await r.json()).error, 'pairing_closed');
+  });
+
+  await test('sin espacio en disco: avisa al empezar (y al reanudar), sin crear nada', async () => {
+    const free = 300 * 1048576; // simula 300 MB libres
+    server.freeSpaceOverride = () => free;
+    let alert = null;
+    server.once('disk-full', (e) => (alert = e));
+    let r = await post('/api/v1/uploads', { name: 'enorme.mov', size: 500 * 1048576 });
+    assert.equal(r.status, 507);
+    assert.equal(alert?.name, 'enorme.mov');
+    assert.ok(!fs.existsSync(path.join(tmp, 'recv', 'enorme.mov.ntpart')));
+    // Un archivo que sí cabe
+    r = await post('/api/v1/uploads', { name: 'cabe.mov', size: 150 * 1048576 });
+    assert.equal(r.status, 200);
+    const s = await r.json();
+    // Al reanudar se vuelve a comprobar lo que falta
+    server.freeSpaceOverride = () => 50 * 1048576;
+    r = await post('/api/v1/uploads', { name: 'cabe.mov', size: 150 * 1048576 });
+    assert.equal(r.status, 507);
+    server.freeSpaceOverride = null;
+    server.cancelUpload(s.id);
+  });
+
+  await test('espacio libre real del disco legible', async () => {
+    const free = await server.freeSpace(tmp);
+    assert.ok(free === null || free > 0);
   });
 
   await test('estadísticas', async () => {
@@ -296,7 +341,8 @@ function putAndDrop(id, offset, data, sendBytes) {
     await again.stop();
   });
 
-  await test('mDNS: un PC descubre a otro N-Transfer en la red', async () => {
+  if (process.env.CI) results.push(['-', 'mDNS (omitida en CI: los servidores de GitHub no siempre permiten multicast)']);
+  else await test('mDNS: un PC descubre a otro N-Transfer en la red', async () => {
     const { spawn } = require('child_process');
     const otherId = crypto.randomUUID();
     const child = spawn(process.execPath, ['-e', `
