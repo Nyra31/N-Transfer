@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 const S = {
   settings: {}, pair: {}, devices: [], outbox: [], history: [], stats: {}, customSkins: [],
   active: new Map(), tab: 'transfers', serverError: null, updateReady: false, version: '', thumbBase: '',
+  filter: { q: '', type: 'all', device: '' }, sel: new Set(),
 };
 let t = translator('es');
 let speed = 0;
@@ -185,6 +186,9 @@ function renderList() {
   const num = (i) => el('span', 'num', String(i + 1).padStart(2, '0') + '.');
 
   if (S.tab === 'transfers') {
+    renderFilters();
+    const known = new Set(S.history.map((h) => h.id));
+    for (const id of S.sel) if (!known.has(id)) S.sel.delete(id);
     const active = [...S.active.values()].reverse();
     active.forEach((a, i) => {
       const li = el('li', 'active ' + (a.state || ''));
@@ -203,8 +207,11 @@ function renderList() {
       li.append(num(i), thumbCell(a), el('span', 'name', (a.direction === 'in' ? '▼ ' : '▲ ') + a.name), meta, bar);
       list.append(li);
     });
-    S.history.forEach((h, i) => {
-      const li = el('li');
+    const shown = filteredHistory();
+    visibleIds = shown.map((h) => h.id);
+    shown.forEach((h, i) => {
+      const li = el('li', S.sel.has(h.id) ? 'sel' : '');
+      li.dataset.id = h.id;
       const meta = el('span', 'meta');
       if (h.kind === 'text') {
         meta.append(btn(t('copy'), null, () => {
@@ -221,15 +228,40 @@ function renderList() {
       li.ondblclick = () => (h.kind === 'text' ? window.nt.invoke('clipboard-write', h.text).then(() => toast(t('copied'))) : window.nt.invoke('open-entry', h.id));
       li.oncontextmenu = (e) => {
         e.preventDefault();
+        if (!S.sel.has(h.id)) selectOnly(h.id);
+        if (S.sel.size > 1) return; // con varias seleccionadas se usan los botones de abajo
         window.nt.invoke('item-menu', h.id);
       };
-      li.onclick = () => select(li);
+      li.onclick = (e) => clickSelect(h.id, e);
+      // Arrastrar a otra carpeta o aplicación (con varias seleccionadas, se arrastran todas)
+      if (h.kind !== 'text' && h.path) {
+        li.draggable = true;
+        li.ondragstart = (e) => {
+          e.preventDefault();
+          if (!S.sel.has(h.id)) selectOnly(h.id);
+          outDrag = true;
+          window.nt.startDrag([...S.sel]);
+        };
+      }
       list.append(li);
     });
-    count = active.length + S.history.length;
-    const size = S.history.reduce((s, h) => s + (h.kind === 'text' ? 0 : h.size), 0);
-    $('summary').textContent = t('itemsTotal', { n: S.history.length, size: formatSize(size) });
-    if (S.history.length) action('clear', () => window.nt.invoke('history-clear'));
+    count = active.length + shown.length;
+    if (S.sel.size) {
+      $('summary').textContent = t('selected', { n: S.sel.size });
+      const ids = () => [...S.sel];
+      action('openSel', () => window.nt.invoke('entries', 'open', ids()));
+      action('showSel', () => window.nt.invoke('entries', 'show', ids()));
+      action('removeSel', () => removeSelected());
+      action('trashSel', () => window.nt.invoke('entries', 'trash', ids()));
+    } else {
+      const size = shown.reduce((s, h) => s + (h.kind === 'text' ? 0 : h.size), 0);
+      $('summary').textContent = t('itemsTotal', { n: shown.length, size: formatSize(size) });
+      if (S.history.length && !filtering()) action('clear', () => window.nt.invoke('history-clear'));
+    }
+    if (!count && filtering()) {
+      $('empty').textContent = t('noResults');
+      return finishList(list, scroll);
+    }
   }
 
   if (S.tab === 'outbox') {
@@ -238,9 +270,11 @@ function renderList() {
       const meta = el('span', 'meta');
       if (r.type !== 'text') meta.append(el('span', 'dim', formatSize(r.size)));
       meta.append(btn('×', t('remove'), () => window.nt.invoke('outbox-remove', r.id)));
-      const name = r.type === 'text' ? r.text.trim().split('\n')[0] : r.name;
-      li.append(num(i), thumbCell(r.type === 'text' ? { kind: 'text' } : r), el('span', 'name', name), meta,
-        el('span', 'sub dim', timeAgo(t, r.addedAt)));
+      const name = r.type === 'text' ? r.text.trim().split('\n')[0] : r.type === 'folder' ? r.name + '/' : r.name;
+      const sub = r.type === 'folder' ? `${t('folderItems', { n: r.count })} · ZIP · ${timeAgo(t, r.addedAt)}` : timeAgo(t, r.addedAt);
+      const thumb = thumbCell(r.type === 'text' ? { kind: 'text' } : r);
+      if (r.type === 'folder') thumb.textContent = '▤';
+      li.append(num(i), thumb, el('span', 'name', name), meta, el('span', 'sub dim', sub));
       li.onclick = () => select(li);
       list.append(li);
     });
@@ -248,6 +282,7 @@ function renderList() {
     const size = S.outbox.reduce((s, h) => s + (h.size || 0), 0);
     $('summary').textContent = t('itemsTotal', { n: S.outbox.length, size: formatSize(size) });
     action('add', () => window.nt.invoke('outbox-pick'));
+    action('addFolder', () => window.nt.invoke('outbox-pick-folder'));
     action('text', openText);
     if (S.outbox.length) action('clearAll', () => window.nt.invoke('outbox-clear'));
   }
@@ -270,11 +305,116 @@ function renderList() {
 
   const empty = { transfers: 'emptyTransfers', outbox: 'emptyOutbox', devices: 'emptyDevices' }[S.tab];
   $('empty').textContent = count ? '' : t(empty);
+  finishList(list, scroll);
+}
+function finishList(list, scroll) {
   list.scrollTop = scroll;
+  $('filters').hidden = S.tab !== 'transfers';
 }
 function select(li) {
   for (const x of $('list').children) x.classList.toggle('sel', x === li);
 }
+
+// ───────────── búsqueda, filtros y selección múltiple (historial) ─────────────
+let visibleIds = [];
+let anchorId = null;
+let outDrag = false; // arrastrando desde la lista hacia fuera: no confundirlo con «soltar para enviar»
+const filtering = () => !!(S.filter.q || S.filter.type !== 'all' || S.filter.device);
+
+function filteredHistory() {
+  const q = S.filter.q.trim().toLowerCase();
+  return S.history.filter((h) => {
+    if (S.filter.type !== 'all' && (h.kind || 'other') !== S.filter.type) return false;
+    if (S.filter.device && h.device !== S.filter.device) return false;
+    if (q && !`${h.name} ${h.text || ''} ${h.device}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderFilters() {
+  for (const b of $('ftypes').children) b.classList.toggle('active', b.dataset.f === S.filter.type);
+  const devices = [...new Set(S.history.map((h) => h.device).filter(Boolean))];
+  const sel = $('fDevice');
+  sel.hidden = devices.length < 2;
+  const opts = [['', t('allDevices')], ...devices.map((d) => [d, d])];
+  if (sel.dataset.sig !== JSON.stringify(opts)) {
+    sel.dataset.sig = JSON.stringify(opts);
+    sel.replaceChildren(...opts.map(([v, l]) => Object.assign(el('option', '', l), { value: v })));
+  }
+  sel.value = S.filter.device;
+}
+
+function selectOnly(id) {
+  S.sel = new Set([id]);
+  anchorId = id;
+  scheduleList();
+}
+function clickSelect(id, e) {
+  if (e.shiftKey && anchorId && visibleIds.includes(anchorId)) {
+    const [a, b] = [visibleIds.indexOf(anchorId), visibleIds.indexOf(id)].sort((x, y) => x - y);
+    S.sel = new Set(visibleIds.slice(a, b + 1));
+  } else if (e.ctrlKey || e.metaKey) {
+    if (S.sel.has(id)) S.sel.delete(id);
+    else S.sel.add(id);
+    anchorId = id;
+  } else {
+    S.sel = new Set([id]);
+    anchorId = id;
+  }
+  scheduleList();
+}
+function removeSelected() {
+  if (!S.sel.size) return;
+  window.nt.invoke('entries', 'remove', [...S.sel]);
+  S.sel.clear();
+}
+
+$('search').addEventListener('input', (e) => {
+  S.filter.q = e.target.value;
+  S.sel.clear();
+  renderList();
+});
+$('ftypes').onclick = (e) => {
+  const f = e.target.closest('[data-f]')?.dataset.f;
+  if (!f) return;
+  S.filter.type = f;
+  S.sel.clear();
+  renderFilters();
+  renderList();
+};
+$('fDevice').onchange = (e) => {
+  S.filter.device = e.target.value;
+  S.sel.clear();
+  renderList();
+};
+$('list').addEventListener('keydown', (e) => {
+  if (S.tab !== 'transfers') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    S.sel = new Set(visibleIds);
+    renderList();
+  } else if (e.key === 'Delete' && S.sel.size) {
+    e.preventDefault();
+    if (e.shiftKey) window.nt.invoke('entries', 'trash', [...S.sel]);
+    else removeSelected();
+  } else if (e.key === 'Enter' && S.sel.size) {
+    window.nt.invoke('entries', 'open', [...S.sel]);
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && S.tab === 'transfers') {
+    e.preventDefault();
+    $('search').focus();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+    e.preventDefault();
+    window.nt.invoke('set', 'scale', S.settings.scale === 2 ? 1 : 2);
+  }
+});
+// Al soltar fuera de la ventana el primer movimiento del ratón llega sin botones pulsados
+window.addEventListener('mousemove', (e) => {
+  if (outDrag && e.buttons === 0) outDrag = false;
+});
 
 let listDirty = false;
 function scheduleList() {
@@ -350,8 +490,17 @@ function fillSettings() {
       $(id).title = $(id).value;
     }
   });
-  $('netInfo').textContent = `${S.pair.ip}:${S.pair.port}\n${S.pair.host}`;
+  $('netInfo').textContent = `${S.pair.ip}:${S.pair.port} · ${S.pair.host}`;
   $('version').textContent = 'v' + S.version;
+  $('setScale').value = String(s.scale || 1);
+  if (document.activeElement !== $('setPcName')) {
+    $('setPcName').value = s.pcName || '';
+    $('setPcName').placeholder = s.pcLabel || '';
+  }
+  const ipOpts = [['', `${t('ipAuto')} (${s.ips?.[0] || '—'})`], ...(s.ips || []).map((ip) => [ip, ip])];
+  $('setIp').replaceChildren(...ipOpts.map(([v, l]) => Object.assign(el('option', '', l), { value: v })));
+  $('setIp').value = s.preferredIp || '';
+  $('customActions').hidden = !S.customSkins.some((c) => c.id === s.skin);
 
   const picker = $('customPicker');
   picker.replaceChildren();
@@ -398,7 +547,9 @@ for (const dlg of document.querySelectorAll('.overlay')) {
   });
 }
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') for (const d of document.querySelectorAll('.overlay')) d.hidden = true;
+  if (e.key !== 'Escape') return;
+  if (editor) return closeEditor(); // quita también la vista previa
+  for (const d of document.querySelectorAll('.overlay')) d.hidden = true;
 });
 
 // Pegar (Ctrl+V) con la ventana activa: abre «Enviar texto» con el portapapeles.
@@ -450,6 +601,10 @@ $('setTop').onchange = (e) => window.nt.invoke('set', 'alwaysOnTop', e.target.ch
 $('setSounds').onchange = (e) => window.nt.invoke('set', 'sounds', e.target.checked);
 $('setCopy').onchange = (e) => window.nt.invoke('set', 'autoCopyText', e.target.checked);
 $('setSplit').onchange = (e) => window.nt.invoke('set', 'splitByType', e.target.checked);
+$('setScale').onchange = (e) => window.nt.invoke('set', 'scale', Number(e.target.value));
+$('setIp').onchange = (e) => window.nt.invoke('set', 'preferredIp', e.target.value);
+$('setPcName').onchange = (e) => window.nt.invoke('set', 'pcName', e.target.value);
+$('setPcName').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
 for (const r of document.querySelectorAll('input[name=heic]')) r.onchange = () => window.nt.invoke('set', 'heicMode', r.value);
 document.querySelector('#settingsDlg').addEventListener('click', (e) => {
   const pick = e.target.closest('[data-pick]')?.dataset.pick;
@@ -475,7 +630,7 @@ for (const b of document.querySelectorAll('.tab')) {
 // ───────────── arrastrar y soltar (PC → móvil) ─────────────
 let dragDepth = 0;
 window.addEventListener('dragenter', (e) => {
-  if (!e.dataTransfer.types.includes('Files')) return;
+  if (outDrag || !e.dataTransfer.types.includes('Files')) return;
   dragDepth++;
   document.body.classList.add('dragging');
 });
@@ -488,6 +643,10 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   dragDepth = 0;
   document.body.classList.remove('dragging');
+  if (outDrag) {
+    outDrag = false; // se soltó dentro de la propia ventana: no es un envío al móvil
+    return;
+  }
   const paths = [...e.dataTransfer.files].map((f) => window.nt.pathForFile(f)).filter(Boolean);
   if (paths.length) {
     window.nt.invoke('outbox-add', paths);
@@ -498,6 +657,224 @@ window.addEventListener('drop', (e) => {
     if (text) openText(text);
   }
 });
+
+// ───────────── asistente «No conecta» ─────────────
+let diagChecks = [];
+function openDiag() {
+  for (const d of document.querySelectorAll('.overlay')) d.hidden = true;
+  $('diagDlg').hidden = false;
+  runDiag();
+}
+async function runDiag() {
+  $('diagList').replaceChildren(el('li', 'info', t('diagChecking')));
+  diagChecks = await window.nt.invoke('diagnostics');
+  renderDiag();
+}
+function diagRow(c) {
+  const d = c.data || {};
+  const acts = [];
+  const act = (key, fn) => acts.push(btn(t(key), null, fn, 'nt-btn'));
+  let text = '';
+  switch (c.id) {
+    case 'server':
+      text = c.status === 'ok' ? t('dServerOk', { port: d.port }) : t('dServerErr', { port: d.port, error: d.error });
+      break;
+    case 'ip':
+      text = c.status === 'error' ? t('dIpErr') : c.status === 'warn' ? t('dIpMulti', { ip: d.ip, all: d.all.join(', ') }) : t('dIpOk', { ip: d.ip });
+      break;
+    case 'profile': {
+      const pub = (d.profiles || []).find((p) => p.category === 'Public');
+      if (c.status === 'warn') {
+        text = t('dProfileWarn', { name: pub?.name || '' });
+        act('btnNetSettings', () => window.nt.invoke('open-network-settings'));
+      } else if (c.status === 'info') text = t('dProfileInfo');
+      else text = t('dProfileOk', { list: d.profiles.map((p) => `${p.name} (${p.category === 'DomainAuthenticated' ? 'Domain' : p.category})`).join(', ') });
+      break;
+    }
+    case 'firewall':
+      text = d.unknown ? t('dFwUnknown') : d.blocked ? t('dFwBlock') : d.allowed ? t('dFwOk') : t('dFwWarn');
+      if (c.status !== 'ok') {
+        act('btnFw', async () => {
+          const ok = await window.nt.invoke('firewall-add');
+          toast(ok ? t('fwAdded') : t('fwFailed'));
+          runDiag();
+        });
+      }
+      break;
+    case 'mdns':
+      text = c.status === 'ok' ? t('dMdnsOk', { host: d.host }) : t('dMdnsWarn', { host: d.host });
+      break;
+    case 'contact':
+      text = d.contact ? t('dContactOk', { ip: d.contact.ip, when: timeAgo(t, d.contact.at).toLowerCase() }) : t('dContactWarn', { url: d.url });
+      break;
+    case 'tips':
+      text = t('dTips');
+      break;
+  }
+  return { text, acts };
+}
+function renderDiag() {
+  const marks = { ok: '✓', warn: '!', error: '✗', info: 'i' };
+  $('diagList').replaceChildren(...diagChecks.map((c) => {
+    const li = el('li', c.status);
+    const body = el('div');
+    const { text, acts } = diagRow(c);
+    body.append(el('div', '', text));
+    if (acts.length) {
+      const a = el('div', 'acts');
+      a.append(...acts);
+      body.append(a);
+    }
+    li.append(el('span', 'mark', marks[c.status]), body);
+    return li;
+  }));
+}
+$('btnDiagRun').onclick = runDiag;
+$('btnPairDiag').onclick = openDiag;
+$('btnPrefsDiag').onclick = openDiag;
+
+// ───────────── editor de skins ─────────────
+const EDITOR_FIELDS = [
+  ['gFrame', [['frameTop', 'cTop', '--frame-bg', 0], ['frameBottom', 'cBottom', '--frame-bg', -1], ['text', 'cText', '--text', 0]]],
+  ['gTitle', [['titleTop', 'cTop', '--title-bg', 0], ['titleBottom', 'cBottom', '--title-bg', -1], ['titleFg', 'cText', '--title-fg', 0]]],
+  ['gLcd', [['lcdBg', 'cBg', '--lcd-bg', 0], ['lcdFg', 'cText', '--lcd-fg', 0], ['lcdDim', 'cDim', '--lcd-dim', 0]]],
+  ['gButtons', [['btnTop', 'cTop', '--btn-bg', 0], ['btnBottom', 'cBottom', '--btn-bg', -1], ['btnFg', 'cText', '--btn-fg', 0]]],
+  ['gList', [['listBg', 'cBg', '--list-bg', 0], ['listFg', 'cText', '--list-fg', 0], ['listSel', 'cSel', '--list-sel-bg', 0]]],
+  ['gProgress', [['accent1', 'cTop', '--accent', 0], ['accent2', 'cBottom', '--accent', -1], ['viz1', 'cLow', '--viz-1', 0], ['viz2', 'cMid', '--viz-2', 0], ['viz3', 'cHigh', '--viz-3', 0]]],
+];
+const colorCtx = document.createElement('canvas').getContext('2d');
+/** Cualquier color CSS → #rrggbb (sin transparencia). */
+function toHex(c) {
+  colorCtx.fillStyle = '#000';
+  colorCtx.fillStyle = c;
+  const v = colorCtx.fillStyle;
+  if (v.startsWith('#')) return v;
+  const m = v.match(/[\d.]+/g) || [0, 0, 0];
+  return '#' + m.slice(0, 3).map((x) => Math.round(+x).toString(16).padStart(2, '0')).join('');
+}
+const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const hex = (a) => '#' + a.map((x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
+const mix = (a, b, k) => hex(rgb(a).map((x, i) => x + (rgb(b)[i] - x) * k));
+const lighten = (a, k) => mix(a, '#ffffff', k);
+const darken = (a, k) => mix(a, '#000000', k);
+const alpha = (a, k) => `rgba(${rgb(a).join(', ')}, ${k})`;
+const contrast = (a) => (rgb(a).reduce((s, x, i) => s + x * [0.299, 0.587, 0.114][i], 0) > 150 ? '#000000' : '#ffffff');
+const grad = (a, b) => `linear-gradient(180deg, ${a} 0%, ${b} 100%)`;
+
+function editorDefaults() {
+  const cs = getComputedStyle(document.body);
+  const v = {};
+  for (const [, fields] of EDITOR_FIELDS) {
+    for (const [key, , cssVar, pick] of fields) {
+      const raw = cs.getPropertyValue(cssVar);
+      const found = raw.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/gi) || [raw.trim() || '#000'];
+      v[key] = toHex(pick === -1 ? found[found.length - 1] : found[0]);
+    }
+  }
+  v.round = parseInt(cs.getPropertyValue('--btn-radius'), 10) >= 8;
+  return v;
+}
+
+function skinVars(v) {
+  const cs = getComputedStyle(document.body);
+  return {
+    '--font-ui': cs.getPropertyValue('--font-ui').trim(),
+    '--font-lcd': cs.getPropertyValue('--font-lcd').trim(),
+    '--text': v.text, '--text-dim': mix(v.text, v.frameBottom, 0.45),
+    '--frame-bg': grad(v.frameTop, v.frameBottom), '--frame-hi': lighten(v.frameTop, 0.3), '--frame-lo': darken(v.frameBottom, 0.6),
+    '--panel-bg': mix(v.frameTop, v.frameBottom, 0.5),
+    '--title-bg': grad(v.titleTop, v.titleBottom), '--title-fg': v.titleFg,
+    '--title-stripe': `repeating-linear-gradient(180deg, ${v.titleFg} 0 1px, transparent 1px 3px)`,
+    '--lcd-bg': v.lcdBg, '--lcd-fg': v.lcdFg, '--lcd-dim': v.lcdDim, '--lcd-glow': `0 0 6px ${alpha(v.lcdFg, 0.55)}`,
+    '--lcd-border': darken(v.lcdBg, 0.5), '--lcd-radius': v.round ? '8px' : '0',
+    '--btn-bg': grad(v.btnTop, v.btnBottom), '--btn-hover': grad(lighten(v.btnTop, 0.12), lighten(v.btnBottom, 0.12)),
+    '--btn-press': grad(darken(v.btnBottom, 0.2), v.btnTop), '--btn-fg': v.btnFg,
+    '--btn-hi': lighten(v.btnTop, 0.35), '--btn-lo': darken(v.btnBottom, 0.6), '--btn-radius': v.round ? '12px' : '2px',
+    '--accent': grad(v.accent1, v.accent2), '--track': darken(v.frameBottom, 0.55), '--progress-radius': v.round ? '5px' : '0',
+    '--list-bg': v.listBg, '--list-fg': v.listFg, '--list-dim': mix(v.listFg, v.listBg, 0.45),
+    '--list-sel-bg': v.listSel, '--list-sel-fg': contrast(v.listSel), '--list-active': contrast(v.listBg), '--list-alt': 'transparent',
+    '--viz-1': v.viz1, '--viz-2': v.viz2, '--viz-3': v.viz3, '--viz-peak': lighten(v.viz3, 0.5),
+    '--input-bg': v.listBg, '--input-fg': v.listFg, '--legend-fg': v.text, '--check-color': v.listSel,
+    '--fieldset-radius': v.round ? '6px' : '0', '--input-radius': v.round ? '4px' : '0',
+  };
+}
+
+let editor = null; // { id, values }
+function previewSkin() {
+  for (const [k, val] of Object.entries(skinVars(editor.values))) document.body.style.setProperty(k, val);
+  viz.readColors();
+}
+function closeEditor() {
+  document.body.removeAttribute('style');
+  $('editorDlg').hidden = true;
+  editor = null;
+  requestAnimationFrame(() => viz.readColors());
+}
+function openEditor(id) {
+  const custom = id && S.customSkins.find((s) => s.id === id);
+  let values = editorDefaults();
+  const saved = custom && /@editor\s+(\{.*?\})\s*\*\//s.exec(custom.css);
+  if (saved) {
+    try { values = { ...values, ...JSON.parse(saved[1]) }; } catch { /* hecha a mano: se parte de lo que se ve */ }
+  }
+  editor = { id: custom ? custom.id : null, values };
+  $('edName').value = custom ? custom.name : `${t('skinName')} ${S.customSkins.length + 1}`;
+  const groups = $('editorGroups');
+  groups.replaceChildren(...EDITOR_FIELDS.map(([gKey, fields]) => {
+    const fs = el('fieldset', 'nt-fieldset');
+    fs.append(el('legend', '', t(gKey)));
+    for (const [key, label] of fields) {
+      const row = el('label', 'color-row');
+      const input = el('input');
+      input.type = 'color';
+      input.value = values[key];
+      input.oninput = () => {
+        editor.values[key] = input.value;
+        previewSkin();
+      };
+      row.append(el('span', '', t(label)), input);
+      fs.append(row);
+    }
+    if (gKey === 'gButtons') {
+      const row = el('label', 'nt-check color-row');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = !!values.round;
+      cb.onchange = () => {
+        editor.values.round = cb.checked;
+        previewSkin();
+      };
+      row.append(cb, el('span', '', t('cRound')));
+      fs.append(row);
+    }
+    return fs;
+  }));
+  for (const d of document.querySelectorAll('.overlay')) d.hidden = true;
+  $('editorDlg').hidden = false;
+  previewSkin();
+}
+async function saveEditor() {
+  const name = $('edName').value.trim() || 'Mi skin';
+  const vars = skinVars(editor.values);
+  const css = `/* @name ${name.replace(/\*\//g, '')} */\n/* @editor ${JSON.stringify(editor.values)} */\n.skin-__ID__ {\n${Object.entries(vars).map(([k, v]) => `  ${k}: ${v};`).join('\n')}\n}\n`;
+  await window.nt.invoke('skin-save', { id: editor.id, name, css });
+  closeEditor();
+}
+$('btnNewSkin').onclick = () => openEditor(null);
+$('btnEditSkin').onclick = () => openEditor(S.settings.skin);
+$('btnDeleteSkin').onclick = () => window.nt.invoke('skin-delete', S.settings.skin);
+$('btnEditorCancel').onclick = closeEditor;
+$('btnEditorX').onclick = closeEditor;
+$('btnEditorSave').onclick = saveEditor;
+
+// ───────────── visualizador ─────────────
+const VIZ_MODES = ['bars', 'scope', 'off'];
+$('viz').onclick = () => {
+  const next = VIZ_MODES[(VIZ_MODES.indexOf(viz.mode) + 1) % VIZ_MODES.length];
+  viz.setMode(next);
+  sound.play('click');
+  window.nt.invoke('set', 'vizMode', next);
+};
 
 // ───────────── eventos del proceso principal ─────────────
 window.nt.on((name, p) => {
@@ -576,12 +953,30 @@ window.nt.on((name, p) => {
       break;
     case 'settings': {
       const langChanged = p.lang !== S.settings.lang;
+      const scaleChanged = p.scale !== S.settings.scale;
       S.settings = p;
       t = translator(p.lang);
       sound.setEnabled(p.sounds);
+      viz.setMode(p.vizMode);
       applySkin();
       if (langChanged) applyI18n();
       if (!$('settingsDlg').hidden) fillSettings();
+      if (scaleChanged && mode !== 'normal') setMode(mode); // recalcula la altura con el nuevo tamaño
+      break;
+    }
+    case 'show-tab':
+      S.tab = p;
+      break;
+    case 'open-diag':
+      openDiag();
+      break;
+    case 'lan-contact': {
+      const c = diagChecks.find((x) => x.id === 'contact');
+      if (c && !$('diagDlg').hidden) {
+        c.status = 'ok';
+        c.data.contact = p;
+        renderDiag();
+      }
       break;
     }
     case 'open-pair':
@@ -607,11 +1002,13 @@ window.nt.on((name, p) => {
 // ───────────── arranque ─────────────
 (async () => {
   const state = await window.nt.invoke('state');
-  const { active, ...rest } = state;
+  const { active, startTab, ...rest } = state;
   Object.assign(S, rest);
   for (const a of active) S.active.set(a.id, a);
+  if (startTab) S.tab = startTab;
   t = translator(S.settings.lang);
   sound.setEnabled(S.settings.sounds);
+  viz.setMode(S.settings.vizMode);
   applySkin();
   applyI18n();
   renderList();

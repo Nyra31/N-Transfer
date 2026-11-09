@@ -35,6 +35,7 @@ const { pipeline } = require('stream/promises');
 const { getLanIPs, getMdnsHost } = require('./net');
 const { kindOf, isHeic } = require('./kinds');
 const { convertHeic } = require('./heic');
+const { folderInfo, zipFolder } = require('./folders');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -114,8 +115,9 @@ class TransferServer extends EventEmitter {
    * @param {string} o.version
    * @param {() => {id:string,name:string,file:string}[]} [o.customSkins]
    * @param {(file:string, out:string) => Promise<boolean>} [o.thumbnailer]  miniaturas de archivos del PC
+   * @param {() => object[]} [o.peers]  otros PCs con N-Transfer en la red (mDNS)
    */
-  constructor({ store, mobileDir, sharedDir, thumbsDir, version, customSkins, thumbnailer }) {
+  constructor({ store, mobileDir, sharedDir, thumbsDir, version, customSkins, thumbnailer, peers }) {
     super();
     this.store = store;
     this.mobileDir = mobileDir;
@@ -124,6 +126,9 @@ class TransferServer extends EventEmitter {
     this.version = version;
     this.customSkins = customSkins || (() => []);
     this.thumbnailer = thumbnailer || null;
+    this.peers = peers || (() => []);
+    if (!store.get('pcId')) store.set('pcId', crypto.randomUUID());
+    this.lastContact = null; // última petición desde otro dispositivo de la red (para el asistente «No conecta»)
     this.port = store.get('port');
     this.clients = new Set();
     this.reserved = new Set();
@@ -138,7 +143,16 @@ class TransferServer extends EventEmitter {
 
   // ───────────── estado público ─────────────
   get ip() {
-    return getLanIPs()[0];
+    const ips = getLanIPs();
+    const preferred = this.store.get('preferredIp');
+    return preferred && ips.includes(preferred) ? preferred : ips[0];
+  }
+  get pcId() {
+    return this.store.get('pcId');
+  }
+  /** Nombre visible del PC: el que elija el usuario o el del equipo. */
+  get pcLabel() {
+    return (this.store.get('pcName') || '').trim() || os.hostname();
   }
   get mdnsHost() {
     return getMdnsHost();
@@ -162,9 +176,11 @@ class TransferServer extends EventEmitter {
     return (this.store.get('devices') || []).map(publicDevice);
   }
   outbox() {
-    return (this.store.get('outbox') || []).map((i) => (i.type === 'text'
-      ? { id: i.id, type: 'text', text: i.text, addedAt: i.addedAt }
-      : { id: i.id, type: 'file', name: i.name, size: i.size, kind: i.kind, thumb: i.thumb || null, addedAt: i.addedAt }));
+    return (this.store.get('outbox') || []).map((i) => {
+      if (i.type === 'text') return { id: i.id, type: 'text', text: i.text, addedAt: i.addedAt };
+      if (i.type === 'folder') return { id: i.id, type: 'folder', name: i.name, size: i.size, count: i.count, addedAt: i.addedAt };
+      return { id: i.id, type: 'file', name: i.name, size: i.size, kind: i.kind, thumb: i.thumb || null, addedAt: i.addedAt };
+    });
   }
   history() {
     return this.store.get('history') || [];
@@ -299,8 +315,16 @@ class TransferServer extends EventEmitter {
     const added = [];
     for (const p of paths) {
       const st = await fsp.stat(p).catch(() => null);
-      if (!st || !st.isFile()) continue;
-      if (items.some((i) => i.path === p)) continue;
+      if (!st || items.some((i) => i.path === p)) continue;
+      if (st.isDirectory()) {
+        // Carpetas: el móvil las descarga como ZIP
+        const { count, size } = await folderInfo(p);
+        if (!count) continue;
+        const item = { id: crypto.randomUUID(), type: 'folder', path: p, name: path.basename(p) || p, size, count, addedAt: Date.now() };
+        items.unshift(item);
+        continue;
+      }
+      if (!st.isFile()) continue;
       const item = { id: crypto.randomUUID(), type: 'file', path: p, name: path.basename(p), size: st.size, kind: kindOf(p), addedAt: Date.now() };
       items.unshift(item);
       added.push(item);
@@ -358,6 +382,19 @@ class TransferServer extends EventEmitter {
     this.emit('history-changed', []);
   }
 
+  /** Quita entradas del historial (los archivos no se tocan). */
+  removeHistory(ids) {
+    const drop = new Set(ids);
+    const keepThumbs = new Set((this.store.get('outbox') || []).map((i) => i.thumb).filter(Boolean));
+    const history = this.history();
+    for (const h of history) {
+      if (drop.has(h.id) && h.thumb && !keepThumbs.has(h.thumb)) fsp.unlink(this.thumbPath(h.thumb)).catch(() => {});
+    }
+    const rest = history.filter((h) => !drop.has(h.id));
+    this.store.set('history', rest);
+    this.emit('history-changed', rest);
+  }
+
   addHistory(entry) {
     const all = [entry, ...(this.store.get('history') || [])];
     for (const old of all.slice(MAX_HISTORY)) {
@@ -402,6 +439,7 @@ class TransferServer extends EventEmitter {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
     let m;
+    this.noteContact(req, p);
 
     if (req.method === 'OPTIONS') {
       cors(res);
@@ -412,7 +450,7 @@ class TransferServer extends EventEmitter {
     if (p === '/api/v1/info') {
       cors(res);
       return json(res, 200, {
-        app: 'N-Transfer', api: 1, version: this.version, name: os.hostname(), host: this.mdnsHost, port: this.port,
+        app: 'N-Transfer', api: 1, version: this.version, id: this.pcId, name: this.pcLabel, host: this.mdnsHost, port: this.port,
       });
     }
 
@@ -436,9 +474,12 @@ class TransferServer extends EventEmitter {
 
       if (p === '/api/v1/me') {
         return json(res, 200, {
-          device: publicDevice(dev), pcName: os.hostname(), host: this.mdnsHost, port: this.port,
+          device: publicDevice(dev), pcId: this.pcId, pcName: this.pcLabel, host: this.mdnsHost, port: this.port,
           skin: this.store.get('skin'), lang: this.store.get('lang'), version: this.version, skins: this.skinsList(),
         });
+      }
+      if (p === '/api/v1/peers') {
+        return json(res, 200, { peers: this.peers().filter((x) => x.id !== this.pcId) });
       }
       if (p === '/api/v1/uploads' && req.method === 'POST') return this.createUpload(req, res, dev);
       if ((m = p.match(new RegExp(`^/api/v1/uploads/(${UUID})$`)))) {
@@ -486,6 +527,16 @@ class TransferServer extends EventEmitter {
     return json(res, 404, { error: 'not_found' });
   }
 
+  /** Recuerda la última petición llegada desde otro dispositivo (si llega, la red y el firewall están bien). */
+  noteContact(req, p) {
+    const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+    if (!ip || ip === '127.0.0.1' || ip === '::1') return;
+    const now = Date.now();
+    const throttled = this.lastContact && now - this.lastContact.at < 1000 && this.lastContact.ip === ip;
+    this.lastContact = { ip, at: now, path: p };
+    if (!throttled) this.emit('lan-contact', this.lastContact);
+  }
+
   async serveStatic(res, root, rel) {
     const file = path.resolve(root, decodeURIComponent(rel));
     if (!file.startsWith(path.resolve(root) + path.sep)) return json(res, 403, { error: 'forbidden' });
@@ -504,19 +555,28 @@ class TransferServer extends EventEmitter {
     if (token && TOKEN_RE.test(token)) {
       html = html.replace('href="/manifest.webmanifest"', `href="/manifest.webmanifest?d=${token}"`);
     }
+    // Nombre bajo el icono de la pantalla de inicio: útil si tienes un icono por PC.
+    const title = this.iconTitle().replace(/[<>"&]/g, '');
+    html = html.replace('content="N-Transfer">', `content="${title}">`);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
-      // Las skins personalizadas son CSS de terceros: que no puedan cargar nada de fuera de la red local.
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://*.local:*; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
+      // http: hace falta para hablar con otros PCs de la red (varios PCs). Las skins personalizadas son CSS:
+      // no pueden ejecutar código, y los scripts solo vienen de este PC.
+      'Content-Security-Policy': "default-src 'self'; connect-src 'self' http:; img-src 'self' data: blob: http:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
     });
     res.end(html);
+  }
+
+  /** «N-Transfer» salvo que el usuario haya puesto nombre al PC. */
+  iconTitle() {
+    return ((this.store.get('pcName') || '').trim() || 'N-Transfer').slice(0, 24);
   }
 
   /** Manifest por dispositivo: start_url lleva el token, así el icono de inicio funciona siempre. */
   manifest(res, token) {
     const start = token && TOKEN_RE.test(token) ? `/?d=${token}` : '/';
     json(res, 200, {
-      name: 'N-Transfer', short_name: 'N-Transfer', start_url: start, scope: '/', display: 'standalone',
+      name: `N-Transfer (${this.pcLabel})`, short_name: this.iconTitle(), start_url: start, scope: '/', display: 'standalone',
       background_color: '#1b1b24', theme_color: '#1b1b24',
       icons: [
         { src: '/m/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -763,6 +823,7 @@ class TransferServer extends EventEmitter {
     const item = (this.store.get('outbox') || []).find((i) => i.id === id && i.type !== 'text');
     const st = item && (await fsp.stat(item.path).catch(() => null));
     if (!st) return json(res, 404, { error: 'not_found' });
+    if (item.type === 'folder') return this.sendFolderZip(res, dev, item);
 
     const headers = {
       'Content-Type': mimeOf(item.path),
@@ -809,6 +870,50 @@ class TransferServer extends EventEmitter {
       const entry = {
         id: tid, direction: 'out', kind, name: item.name, path: item.path, size: st.size, device: dev.name,
         at: Date.now(), thumb: item.thumb || null,
+      };
+      this.addHistory(entry);
+      this.bumpStats(entry, Date.now() - started);
+      this.emit('transfer-done', entry);
+    } catch (e) {
+      this.emit(this.downloads.has(tid) ? 'transfer-error' : 'transfer-cancelled', { id: tid, error: e.message });
+    } finally {
+      this.downloads.delete(tid);
+    }
+  }
+
+  /** Carpeta → ZIP generado sobre la marcha (con su tamaño exacto, para que el móvil muestre el progreso). */
+  async sendFolderZip(res, dev, item) {
+    const { stream, size } = await zipFolder(item.path);
+    const zipName = `${item.name}.zip`;
+    const headers = {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`,
+      'Cache-Control': 'no-store',
+    };
+    if (size >= 0) headers['Content-Length'] = size;
+    res.writeHead(200, headers);
+    const tid = crypto.randomUUID();
+    const started = Date.now();
+    const total = size >= 0 ? size : item.size;
+    this.downloads.set(tid, res);
+    this.emit('transfer-start', {
+      id: tid, direction: 'out', name: zipName, size: total, received: 0, device: dev.name, kind: 'other',
+      thumb: null, state: 'active', startedAt: started,
+    });
+    let sent = 0;
+    let lastEmit = 0;
+    stream.on('data', (chunk) => {
+      sent += chunk.length;
+      const now = Date.now();
+      if (now - lastEmit > 120) {
+        lastEmit = now;
+        this.emit('transfer-progress', { id: tid, received: sent, size: total });
+      }
+    });
+    try {
+      await pipeline(stream, res);
+      const entry = {
+        id: tid, direction: 'out', kind: 'other', name: zipName, path: item.path, size: sent, device: dev.name, at: Date.now(), thumb: null,
       };
       this.addHistory(entry);
       this.bumpStats(entry, Date.now() - started);

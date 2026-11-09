@@ -26,14 +26,29 @@ Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi‑Fi, sin cables, 
 - **Reanudación automática**: si se corta el Wi‑Fi o se bloquea el móvil a mitad de un vídeo, continúa donde se quedó. Si vuelves a elegir el mismo archivo, también.
 - **Texto y enlaces** entre móvil y PC (lo que llega al PC se copia al portapapeles; en el PC, `Ctrl+V` abre «Enviar texto»).
 
+- **Carpetas PC → móvil**: se descargan como un ZIP generado al momento.
+- **«Enviar a → N-Transfer»** en el menú contextual del Explorador de Windows.
+- **Varios PCs**: el móvil ve los demás PCs con N-Transfer de la red, se empareja escribiendo su código y elige a cuál enviar.
+
 **Fotos y vídeos**
 - Miniaturas en el historial y **visor integrado** (doble clic) con flechas y tira de miniaturas.
 - **HEIC → JPG** opcional: guardar el original, original + JPG, o solo JPG.
 - **Carpetas por tipo**: fotos, vídeos y otros archivos en carpetas distintas, cada una configurable.
 
+**Historial**
+- **Buscar y filtrar** por tipo y dispositivo (`Ctrl+F`); **selección múltiple** (`Ctrl`/`Mayús`+clic, `Ctrl+A`) para abrir, quitar o mandar a la papelera.
+- **Arrastrar** fotos y archivos desde la lista a otra carpeta o aplicación.
+- El móvil también guarda su historial de envíos.
+
+**Conexión**
+- **Asistente «¿No conecta?»**: comprueba el firewall, el tipo de red de Windows, la IP y el nombre `.local`, y detecta en directo si llega la conexión del móvil.
+- El instalador añade el permiso del firewall (un aviso de administrador, solo la primera vez).
+- Nombre del PC y dirección del QR configurables.
+
 **Interfaz**
-- 3 skins: **Clásico** (LCD verde), **Plata cromada** y **Luna XP**, y **skins personalizadas** en CSS ([cómo crear una](SKINS.md)). La skin se aplica también en el móvil.
-- **Modo mini** (una LCD diminuta), **siempre visible** y modo plegado (doble clic en la barra de título).
+- 3 skins: **Clásico** (LCD verde), **Plata cromada** y **Luna XP**, y **skins personalizadas**: con el **editor visual** (vista previa en directo) o en CSS ([cómo crear una](SKINS.md)). La skin se aplica también en el móvil.
+- **Tamaño doble** (`Ctrl+D`) o 1,5×, **modo mini** (una LCD diminuta), **siempre visible** y modo plegado (doble clic en la barra de título).
+- Visualizador con tres modos (clic): barras, osciloscopio o apagado.
 - **Efectos de sonido** al emparejar, terminar o fallar (desactivables).
 - **Estadísticas**: total transferido, fotos, vídeos y velocidad máxima. Clic en la LCD para ir cambiando lo que muestra.
 - Icono en la bandeja del sistema, arranque con el sistema, español e inglés.
@@ -80,7 +95,8 @@ El PC anuncia el servicio `_ntransfer._tcp` por mDNS/Bonjour y escucha en el pue
 |---|---|---|
 | GET | `/api/v1/info` | Información pública del PC |
 | POST | `/api/v1/pair` | `{code, name, platform}` → `{token, deviceId}` |
-| GET | `/api/v1/me` | Datos del dispositivo, skin/idioma del PC y skins disponibles |
+| GET | `/api/v1/me` | Datos del dispositivo, id/nombre del PC, skin/idioma y skins disponibles |
+| GET | `/api/v1/peers` | Otros PCs con N-Transfer en la red (descubiertos por mDNS) |
 | POST | `/api/v1/uploads` | `{name, size, mtime, type, thumb?}` → `{id, offset}`; reanuda si el mismo archivo estaba a medias |
 | PUT | `/api/v1/uploads/:id?offset=N` | Bytes desde `N` → `{done, offset}`. `409` offset incorrecto · `423` en pausa · `410` cancelada |
 | GET | `/api/v1/uploads/:id` | `{offset, size, state}` |
@@ -89,7 +105,7 @@ El PC anuncia el servicio `_ntransfer._tcp` por mDNS/Bonjour y escucha en el pue
 | PUT | `/api/v1/upload` | Subida simple de una vez (cabeceras `X-File-Name`, `X-File-Mtime`) |
 | POST | `/api/v1/text` | `{text}` |
 | GET | `/api/v1/outbox` | Archivos y textos que ofrece el PC |
-| GET | `/api/v1/outbox/:id` | Descarga (admite `Range`) |
+| GET | `/api/v1/outbox/:id` | Descarga (admite `Range`); las carpetas se sirven como ZIP |
 | GET | `/api/v1/outbox/:id/thumb` | Miniatura JPG |
 | GET | `/api/v1/events` | Server‑Sent Events: `outbox`, `settings`, `control` (`{id, action}`), `unpaired` |
 

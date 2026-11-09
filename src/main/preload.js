@@ -2,10 +2,11 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const CHANNELS = new Set([
-  'state', 'set', 'pick-folder', 'reset-folder', 'outbox-add', 'outbox-pick', 'outbox-text', 'outbox-remove',
-  'outbox-clear', 'device-forget', 'pair-new', 'open-folder', 'item-menu', 'open-entry', 'main-menu', 'win',
-  'history-clear', 'stats-reset', 'update-install', 'open-external', 'clipboard-read', 'clipboard-write',
-  'transfer', 'skins-folder', 'viewer-state', 'viewer-src', 'viewer-win', 'viewer-file',
+  'state', 'set', 'pick-folder', 'reset-folder', 'outbox-add', 'outbox-pick', 'outbox-pick-folder', 'outbox-text',
+  'outbox-remove', 'outbox-clear', 'device-forget', 'pair-new', 'open-folder', 'item-menu', 'open-entry', 'entries',
+  'main-menu', 'win', 'history-clear', 'stats-reset', 'update-install', 'open-external', 'clipboard-read',
+  'clipboard-write', 'transfer', 'skins-folder', 'skin-save', 'skin-delete', 'diagnostics', 'firewall-add',
+  'open-network-settings', 'viewer-state', 'viewer-src', 'viewer-win', 'viewer-file',
 ]);
 
 contextBridge.exposeInMainWorld('nt', {
@@ -18,5 +19,9 @@ contextBridge.exposeInMainWorld('nt', {
   },
   pathForFile(file) {
     return webUtils.getPathForFile(file);
+  },
+  /** Arrastrar entradas del historial fuera de la ventana (arrastre nativo del sistema). */
+  startDrag(ids) {
+    ipcRenderer.send('drag-out', ids);
   },
 });

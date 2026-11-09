@@ -1,7 +1,7 @@
 {
   "name": "n-transfer",
   "productName": "N-Transfer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi-Fi, con skins al estilo de los 2000",
   "main": "src/main/main.js",
   "author": "Nyra31",
@@ -25,7 +25,8 @@
     "bonjour-service": "^1.4.4",
     "electron-updater": "^6.8.11",
     "heic-convert": "^2.1.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "electron": "^45.2.3",

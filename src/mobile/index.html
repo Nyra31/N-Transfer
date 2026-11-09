@@ -81,6 +81,10 @@
       <button class="nt-btn small" id="btnHideHint"><span data-i18n="mHide"></span></button>
     </div>
 
+    <div class="target-row" id="targetRow" hidden>
+      <span data-i18n="mSendTo"></span>
+      <select class="nt-select" id="targetSel"></select>
+    </div>
     <div class="send-btns">
       <label class="nt-btn big"><span class="ico">▣</span><span data-i18n="mPhotos"></span>
         <input id="pickMedia" type="file" accept="image/*,video/*" multiple></label>
@@ -96,6 +100,10 @@
     <div class="section-title"><span data-i18n="mFromPc"></span> <span id="countFromPc"></span></div>
     <ul class="nt-list nt-inset m-list" id="fromPc"></ul>
     <p class="empty" id="emptyFromPc" data-i18n="mEmptyFromPc"></p>
+
+    <div class="section-title" id="histTitle" hidden><span data-i18n="mHistory"></span>
+      <button class="link-btn" id="btnClearHist" data-i18n="mClearHistory"></button></div>
+    <ul class="nt-list nt-inset m-list hist" id="histList"></ul>
   </section>
 </div>
 
@@ -129,6 +137,10 @@
           <button class="nt-btn" data-lang="es">Español</button>
           <button class="nt-btn" data-lang="en">English</button>
         </div>
+      </fieldset>
+      <fieldset class="nt-fieldset">
+        <legend data-i18n="mOtherPcs"></legend>
+        <ul class="pc-list" id="pcList"></ul>
       </fieldset>
       <p class="pc-info" id="pcInfo"></p>
       <button class="nt-btn big" id="btnUnpair"><span data-i18n="mUnpair"></span></button>

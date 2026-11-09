@@ -5,8 +5,9 @@
   const $ = (id) => document.getElementById(id);
   const LS = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch { /* modo privado */ } },
+    set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
     del(k) { try { localStorage.removeItem(k); } catch { /* modo privado */ } },
+    json(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
   };
   const q = new URLSearchParams(location.search);
   const ua = navigator.userAgent;
@@ -15,22 +16,29 @@
   const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
   const PARALLEL = 2;
   const MAX_RETRIES = 40;
-  const ICONS = { photo: '▣', video: '▶', other: '■', text: '✉' };
+  const MAX_HISTORY = 150;
+  const ICONS = { photo: '▣', video: '▶', other: '■', text: '✉', folder: '▤' };
+  const VIZ_MODES = ['bars', 'scope', 'off'];
 
-  let token = q.get('d') || LS.get('nt-token');
+  /** El PC que sirve esta página. Los demás PCs emparejados están en `pcs`. */
+  const HOME = { id: null, base: '', token: q.get('d') || LS.get('nt-token'), name: '' };
+  let pcs = LS.json('nt-pcs', {}); // id → {id, name, base, token}
+  let targetId = LS.get('nt-target') || null;
+  let peers = [];
   const pairCode = q.get('c');
   let me = null;
   let lang = LS.get('nt-lang') || ((navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en');
   let skin = q.get('skin') || LS.get('nt-skin') || 'winamp';
   let skins = [{ id: 'winamp' }, { id: 'chrome' }, { id: 'luna' }];
   let t = translator(lang);
-  let online = false;
-  let outbox = [];
+  const online = {}; // pcId → bool
+  const outboxes = {}; // pcId → items
   const queue = [];
   let active = 0;
   let speed = 0;
   let bytesTick = 0;
   const viz = window.NT_VIZ.createViz($('viz'), { barWidth: 3, gap: 2 });
+  viz.setMode(LS.get('nt-viz') || 'bars');
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -41,6 +49,14 @@
   const kindOf = (f) => (/^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic|heif|dng)$/i.test(f.name) ? 'photo'
     : /^video\//.test(f.type) || /\.(mov|mp4|m4v|3gp|webm)$/i.test(f.name) ? 'video' : 'other');
   const isUrl = (s) => /^https?:\/\/\S+$/.test(String(s).trim());
+  const target = () => (targetId && pcs[targetId]) || HOME;
+  const pcKey = (pc) => pc.id || 'home';
+  const savePcs = () => LS.set('nt-pcs', JSON.stringify(pcs));
+
+  function call(pc, path, opts = {}) {
+    return fetch(pc.base + path, { ...opts, headers: { 'X-Device-Token': pc.token || '', ...(opts.headers || {}) } });
+  }
+  const postJson = (pc, path, body) => call(pc, path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
   // ───────────── idioma y skin ─────────────
   function applyI18n() {
@@ -50,8 +66,11 @@
     $('installText').textContent = isAndroid ? t('mInstallHintAndroid') : t('mInstallHint');
     for (const b of $('langRow').children) b.classList.toggle('active', b.dataset.lang === lang);
     renderSkinRow();
-    for (const item of queue) renderItemState(item);
+    for (const item of queue) { item.btnKey = null; renderItemState(item); }
     renderOutbox();
+    renderHistory();
+    renderTargets();
+    renderPcList();
   }
 
   function renderSkinRow() {
@@ -90,16 +109,11 @@
     tickMarquee();
   }
 
-  function api(path, opts = {}) {
-    return fetch(path, { ...opts, headers: { 'X-Device-Token': token || '', ...(opts.headers || {}) } });
-  }
-  const postJson = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-
   function unpaired() {
     LS.del('nt-token');
-    token = null;
+    HOME.token = null;
     show('viewNone');
-    online = false;
+    online[pcKey(HOME)] = false;
     renderLcd();
   }
 
@@ -111,9 +125,10 @@
       return running.map((i) => `▲ ${i.file.name} (${i.size ? Math.floor((i.received / i.size) * 100) : 0}%)`).join('  ***  ');
     }
     if (queue.some((i) => i.state === 'waiting')) return t('mWaiting');
-    if (!token) return 'N-TRANSFER  ***  ' + t('mNotPairedTitle');
-    if (!online) return t('mOffline');
-    return t('mConnectedTo', { pc: me ? me.pcName : '…' });
+    if (!HOME.token) return 'N-TRANSFER  ***  ' + t('mNotPairedTitle');
+    const tg = target();
+    if (!online[pcKey(tg)]) return t('mOffline');
+    return t('mConnectedTo', { pc: tg.name || (me ? me.pcName : '…') });
   }
   function tickMarquee() {
     const box = $('marquee');
@@ -135,8 +150,8 @@
     const pending = queue.filter((i) => ['up', 'queued', 'preparing', 'waiting'].includes(i.state));
     const up = queue.filter((i) => i.state === 'up');
     let status = t('ready');
-    if (!token) status = '—';
-    else if (!online) status = 'OFFLINE';
+    if (!HOME.token) status = '—';
+    else if (!online[pcKey(target())]) status = 'OFFLINE';
     else if (up.length) status = t('sending');
     else if (queue.some((i) => i.state === 'waiting')) status = t('waiting');
     else if (queue.some((i) => i.state === 'paused')) status = t('paused');
@@ -145,7 +160,7 @@
     $('lcdSpeed').textContent = (speed / 1048576).toFixed(1);
     const done = queue.filter((i) => i.state === 'done').length;
     const total = queue.filter((i) => i.state !== 'cancelled').length;
-    $('lcdSmall').textContent = total ? `${done}/${total}` : me ? me.pcName : '';
+    $('lcdSmall').textContent = total ? `${done}/${total}` : target().name || (me ? me.pcName : '');
     const size = pending.reduce((s, i) => s + i.size, 0);
     const got = pending.reduce((s, i) => s + i.received, 0);
     $('seek').style.width = size ? ((got / size) * 100).toFixed(1) + '%' : '0%';
@@ -170,6 +185,12 @@
     speed = active ? speed * 0.5 + inst * 0.5 : 0;
     renderLcd();
   }, 500);
+
+  $('viz').onclick = () => {
+    const next = VIZ_MODES[(VIZ_MODES.indexOf(viz.mode) + 1) % VIZ_MODES.length];
+    viz.setMode(next);
+    LS.set('nt-viz', next);
+  };
 
   // ───────────── miniaturas (de una en una: el iPhone tiene poca memoria para decodificar fotos grandes) ─────────────
   let thumbChain = Promise.resolve();
@@ -222,11 +243,87 @@
     return job;
   }
 
+  /** Miniatura diminuta para el historial guardado en el móvil (cabe mucho en poco espacio). */
+  function tinyThumb(dataUrl) {
+    return new Promise((resolve) => {
+      if (!dataUrl) return resolve(null);
+      const img = new Image();
+      img.onload = () => {
+        const s = 64 / Math.max(img.width, img.height);
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * s));
+        c.height = Math.max(1, Math.round(img.height * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.6));
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
+  }
+
+  // ───────────── historial guardado en el móvil ─────────────
+  function loadHistory() {
+    return LS.json('nt-history', []);
+  }
+  async function addHistory(entry) {
+    let list = [entry, ...loadHistory()].slice(0, MAX_HISTORY);
+    // Si no cabe, se quitan miniaturas de las entradas más antiguas
+    while (!LS.set('nt-history', JSON.stringify(list))) {
+      const withThumb = list.map((e, i) => (e.thumb ? i : -1)).filter((i) => i >= 0).pop();
+      if (withThumb === undefined) { list = list.slice(0, Math.floor(list.length / 2)); if (!list.length) break; continue; }
+      list[withThumb] = { ...list[withThumb], thumb: null };
+    }
+    renderHistory();
+  }
+
+  function dayLabel(ts) {
+    const d = new Date(ts);
+    const today = new Date();
+    const y = new Date(Date.now() - 86400000);
+    const same = (a, b) => a.toDateString() === b.toDateString();
+    if (same(d, today)) return t('mToday');
+    if (same(d, y)) return t('mYesterday');
+    return d.toLocaleDateString(lang, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function renderHistory() {
+    // Lo de esta sesión ya aparece en «Enviados»: aquí solo lo anterior
+    const sessionStart = window.__ntSession || (window.__ntSession = Date.now());
+    const items = loadHistory().filter((h) => h.at < sessionStart);
+    $('histTitle').hidden = items.length === 0;
+    const ul = $('histList');
+    ul.replaceChildren();
+    let lastDay = '';
+    for (const h of items) {
+      const day = dayLabel(h.at);
+      if (day !== lastDay) {
+        ul.append(el('li', 'day', day));
+        lastDay = day;
+      }
+      const li = el('li');
+      const thumb = el('span', 'thumb');
+      if (h.thumb) {
+        const img = el('img');
+        img.src = h.thumb;
+        thumb.append(img);
+      } else thumb.textContent = ICONS[h.kind] || '■';
+      const when = new Date(h.at).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
+      li.append(thumb, el('span', 'name', h.name), el('span', 'btns'),
+        el('span', 'state', `${h.kind === 'text' ? '' : formatSize(h.size) + ' · '}${when}${h.pc ? ' · ' + h.pc : ''}`));
+      ul.append(li);
+    }
+  }
+  $('btnClearHist').onclick = () => {
+    LS.del('nt-history');
+    renderHistory();
+  };
+
   // ───────────── móvil → PC: subidas reanudables ─────────────
   function addFiles(files) {
+    const pc = target();
     for (const file of files) {
       const item = {
-        file, kind: kindOf(file), size: file.size, received: 0, state: 'queued', session: null, xhr: null,
+        file, pc, kind: kindOf(file), size: file.size, received: 0, state: 'queued', session: null, xhr: null,
         retries: 0, retryTimer: null, thumbData: null,
       };
       buildItem(item);
@@ -260,11 +357,12 @@
   function renderItemState(item) {
     if (!item.li) return;
     const pct = item.size ? Math.floor((item.received / item.size) * 100) : 0;
+    const multi = Object.keys(pcs).length > 0;
     const labels = {
       queued: t('mQueued'), preparing: t('mQueued'), up: pct + '%', paused: `${t('mPaused')} · ${pct}%`,
       waiting: `${t('mWaiting')} · ${pct}%`, done: '✓ ' + formatSize(item.size), error: t('mError'), cancelled: t('mCancelled'),
     };
-    item.stateEl.textContent = item.note || labels[item.state] || '';
+    item.stateEl.textContent = (item.note || labels[item.state] || '') + (multi && item.pc.name ? ` → ${item.pc.name}` : '');
     item.stateEl.className = 'state' + (item.state === 'done' ? ' ok' : item.state === 'error' ? ' err' : '');
     item.fill.style.width = pct + '%';
     item.bar.hidden = item.state === 'done' || item.state === 'cancelled';
@@ -300,20 +398,21 @@
     item.state = 'preparing';
     item.note = '';
     renderItemState(item);
+    const pc = item.pc;
     try {
       if (!item.session) {
         item.thumbData = await makeThumb(item.file, item.kind);
         setThumb(item);
-        const r = await postJson('/api/v1/uploads', {
+        const r = await postJson(pc, '/api/v1/uploads', {
           name: item.file.name, size: item.size, mtime: item.file.lastModified || 0, type: item.file.type || '', thumb: item.thumbData,
         });
-        if (r.status === 401) { unpaired(); throw Object.assign(new Error('401'), { fatal: true }); }
+        if (r.status === 401) { if (pc === HOME) unpaired(); throw Object.assign(new Error('401'), { fatal: true }); }
         if (!r.ok) throw Object.assign(new Error('http ' + r.status), { status: r.status });
         item.session = await r.json();
         item.received = item.session.offset;
         if (item.received > 0) item.note = t('mResuming', { pct: Math.floor((item.received / item.size) * 100) });
       } else {
-        const r = await api(`/api/v1/uploads/${item.session.id}`);
+        const r = await call(pc, `/api/v1/uploads/${item.session.id}`);
         if (r.status === 410) return markCancelled(item);
         if (!r.ok) throw Object.assign(new Error('http ' + r.status), { status: r.status });
         const s = await r.json();
@@ -332,6 +431,7 @@
       item.note = '';
       item.retries = 0;
       item.received = item.size;
+      addHistory({ name: item.file.name, size: item.size, kind: item.kind, at: Date.now(), pc: pc.name || '', thumb: await tinyThumb(item.thumbData) });
     } catch (e) {
       if (item.state === 'paused' || item.state === 'cancelled') return;
       if (e.fatal) { item.state = 'error'; return; }
@@ -356,8 +456,8 @@
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       item.xhr = xhr;
-      xhr.open('PUT', `/api/v1/uploads/${item.session.id}?offset=${offset}`);
-      xhr.setRequestHeader('X-Device-Token', token);
+      xhr.open('PUT', `${item.pc.base}/api/v1/uploads/${item.session.id}?offset=${offset}`);
+      xhr.setRequestHeader('X-Device-Token', item.pc.token);
       let last = 0;
       xhr.upload.onprogress = (e) => {
         bytesTick += e.loaded - last;
@@ -386,14 +486,14 @@
     clearTimeout(item.retryTimer);
     item.state = 'paused';
     item.xhr?.abort();
-    if (item.session) postJson(`/api/v1/uploads/${item.session.id}/state`, { state: 'paused' }).catch(() => {});
+    if (item.session) postJson(item.pc, `/api/v1/uploads/${item.session.id}/state`, { state: 'paused' }).catch(() => {});
     renderItemState(item);
     renderLcd();
   }
 
   async function resumeItem(item) {
     item.retries = 0;
-    if (item.session) await postJson(`/api/v1/uploads/${item.session.id}/state`, { state: 'active' }).catch(() => {});
+    if (item.session) await postJson(item.pc, `/api/v1/uploads/${item.session.id}/state`, { state: 'active' }).catch(() => {});
     item.state = 'queued';
     renderItemState(item);
     pump();
@@ -403,7 +503,7 @@
     clearTimeout(item.retryTimer);
     item.state = 'cancelled';
     item.xhr?.abort();
-    if (item.session) api(`/api/v1/uploads/${item.session.id}`, { method: 'DELETE' }).catch(() => {});
+    if (item.session) call(item.pc, `/api/v1/uploads/${item.session.id}`, { method: 'DELETE' }).catch(() => {});
     renderItemState(item);
     renderLcd();
   }
@@ -449,7 +549,7 @@
       }
     }
     pump();
-    if (token && (!es || es.readyState === 2)) connectEvents();
+    if (HOME.token) connectAll();
   });
 
   // ───────────── texto ─────────────
@@ -463,12 +563,14 @@
   $('btnTextSend').onclick = async () => {
     const text = $('textInput').value;
     if (!text.trim()) return;
+    const pc = target();
     $('btnTextSend').disabled = true;
-    const r = await postJson('/api/v1/text', { text }).catch(() => null);
+    const r = await postJson(pc, '/api/v1/text', { text }).catch(() => null);
     $('btnTextSend').disabled = false;
     if (r && r.ok) {
       $('textInput').value = '';
       $('textMsg').textContent = t('mSentOk');
+      addHistory({ name: text.trim().split('\n')[0].slice(0, 120), size: 0, kind: 'text', at: Date.now(), pc: pc.name || '', thumb: null });
       setTimeout(() => ($('textSheet').hidden = true), 700);
     } else {
       $('textMsg').textContent = r && r.status === 401 ? t('mNotPairedTitle') : t('mOffline');
@@ -493,8 +595,11 @@
 
   // ───────────── PC → móvil ─────────────
   function renderOutbox() {
+    const pc = target();
+    const outbox = outboxes[pcKey(pc)] || [];
     const ul = $('fromPc');
     ul.replaceChildren();
+    const tok = encodeURIComponent(pc.token || '');
     for (const item of outbox) {
       const li = el('li');
       const thumb = el('span', 'thumb');
@@ -519,19 +624,20 @@
         if (item.thumb) {
           const img = el('img');
           img.loading = 'lazy';
-          img.src = `/api/v1/outbox/${item.id}/thumb?d=${encodeURIComponent(token)}`;
+          img.src = `${pc.base}/api/v1/outbox/${item.id}/thumb?d=${tok}`;
           img.onerror = () => (thumb.textContent = ICONS[item.kind] || '■');
           thumb.append(img);
         } else {
-          thumb.textContent = ICONS[item.kind] || '■';
+          thumb.textContent = item.type === 'folder' ? ICONS.folder : ICONS[item.kind] || '■';
         }
-        const a = el('a', 'nt-btn', t('mDownload'));
-        a.href = `/api/v1/outbox/${item.id}?d=${encodeURIComponent(token)}`;
+        const a = el('a', 'nt-btn', item.type === 'folder' ? t('mDownload') + ' ZIP' : t('mDownload'));
+        a.href = `${pc.base}/api/v1/outbox/${item.id}?d=${tok}`;
         // En la app de inicio de iOS la descarga dentro de la app no tiene «volver»: se abre en Safari.
         if (isIOS && standalone) a.target = '_blank';
-        else a.download = item.name;
+        else a.download = item.type === 'folder' ? item.name + '.zip' : item.name;
         btns.append(a);
-        li.append(thumb, el('span', 'name', item.name), btns, el('span', 'state', formatSize(item.size)));
+        const info = item.type === 'folder' ? `${t('folderItems', { n: item.count })} · ${formatSize(item.size)}` : formatSize(item.size);
+        li.append(thumb, el('span', 'name', item.type === 'folder' ? item.name + '/' : item.name), btns, el('span', 'state', info));
       }
       ul.append(li);
     }
@@ -539,26 +645,143 @@
     $('emptyFromPc').hidden = outbox.length > 0;
   }
 
-  // ───────────── conexión en vivo ─────────────
-  let es = null;
-  function connectEvents() {
-    if (es) es.close();
-    es = new EventSource('/api/v1/events?d=' + encodeURIComponent(token));
-    es.onopen = () => { online = true; renderLcd(); };
-    es.onerror = () => { online = false; renderLcd(); };
-    es.addEventListener('outbox', (e) => { outbox = JSON.parse(e.data).items; renderOutbox(); });
-    es.addEventListener('control', (e) => onControl(JSON.parse(e.data)));
-    es.addEventListener('settings', (e) => {
-      const s = JSON.parse(e.data);
-      if (s.skins) { skins = s.skins; loadCustomSkins(); }
-      if (!LS.get('nt-skin')) skin = s.skin;
-      applySkin();
-      if (!LS.get('nt-lang')) { lang = s.lang; t = translator(lang); applyI18n(); }
+  // ───────────── conexión en vivo (una por PC emparejado) ─────────────
+  const streams = {};
+  function connect(pc) {
+    const key = pcKey(pc);
+    if (streams[key] && streams[key].readyState !== 2) return;
+    streams[key]?.close();
+    const es = new EventSource(`${pc.base}/api/v1/events?d=${encodeURIComponent(pc.token)}`);
+    streams[key] = es;
+    es.onopen = () => { online[key] = true; renderLcd(); renderTargets(); };
+    es.onerror = () => { online[key] = false; renderLcd(); renderTargets(); };
+    es.addEventListener('outbox', (e) => {
+      outboxes[key] = JSON.parse(e.data).items;
+      if (pcKey(target()) === key) renderOutbox();
     });
-    es.addEventListener('unpaired', () => { es.close(); unpaired(); });
+    es.addEventListener('control', (e) => onControl(JSON.parse(e.data)));
+    es.addEventListener('unpaired', () => {
+      es.close();
+      if (pc === HOME) return unpaired();
+      delete pcs[pc.id];
+      savePcs();
+      if (targetId === pc.id) setTarget(null);
+      renderPcList();
+    });
+    if (pc === HOME) {
+      es.addEventListener('settings', (e) => {
+        const s = JSON.parse(e.data);
+        if (s.skins) { skins = s.skins; loadCustomSkins(); }
+        if (!LS.get('nt-skin')) skin = s.skin;
+        applySkin();
+        if (!LS.get('nt-lang')) { lang = s.lang; t = translator(lang); applyI18n(); }
+      });
+    }
+  }
+  function connectAll() {
+    connect(HOME);
+    for (const pc of Object.values(pcs)) connect(pc);
   }
 
-  // ───────────── emparejar ─────────────
+  // ───────────── varios PCs ─────────────
+  function setTarget(id) {
+    targetId = id && pcs[id] ? id : null;
+    if (targetId) LS.set('nt-target', targetId);
+    else LS.del('nt-target');
+    renderTargets();
+    renderOutbox();
+    renderLcd();
+  }
+
+  function renderTargets() {
+    const list = [HOME, ...Object.values(pcs)];
+    $('targetRow').hidden = list.length < 2;
+    const sel = $('targetSel');
+    sel.replaceChildren(...list.map((pc) => {
+      const o = el('option', '', `${pc.name || '…'}${online[pcKey(pc)] === false ? ' (' + t('mOffline').toLowerCase() + ')' : ''}`);
+      o.value = pc.id || '';
+      return o;
+    }));
+    sel.value = targetId || '';
+  }
+  $('targetSel').onchange = (e) => setTarget(e.target.value || null);
+
+  async function loadPeers() {
+    const r = await call(HOME, '/api/v1/peers').catch(() => null);
+    peers = r && r.ok ? (await r.json()).peers : [];
+    // La IP de un PC puede cambiar: se actualiza con lo que se ve en la red
+    for (const p of peers) {
+      if (pcs[p.id]) {
+        pcs[p.id].base = `http://${p.ip}:${p.port}`;
+        pcs[p.id].name = p.name;
+      }
+    }
+    savePcs();
+    renderPcList();
+    renderTargets();
+  }
+
+  function renderPcList() {
+    const ul = $('pcList');
+    const rows = [];
+    const seen = new Set();
+    for (const p of peers) {
+      seen.add(p.id);
+      rows.push({ id: p.id, name: p.name, paired: !!pcs[p.id], peer: p });
+    }
+    for (const pc of Object.values(pcs)) if (!seen.has(pc.id)) rows.push({ id: pc.id, name: pc.name, paired: true });
+    if (!rows.length) {
+      ul.replaceChildren(el('li', 'dim', t('mNoPeers')));
+      return;
+    }
+    ul.replaceChildren(...rows.map((row) => {
+      const li = el('li');
+      li.append(el('span', 'grow', row.name));
+      if (row.paired) {
+        li.append(el('span', 'dim', t('mPaired')));
+        const forget = el('button', 'nt-btn', t('mForgetPc'));
+        forget.onclick = () => {
+          streams[row.id]?.close();
+          delete pcs[row.id];
+          savePcs();
+          if (targetId === row.id) setTarget(null);
+          renderPcList();
+          renderTargets();
+        };
+        li.append(forget);
+      } else {
+        const pair = el('button', 'nt-btn', t('mPairOther'));
+        pair.onclick = () => pairOther(row.peer);
+        li.append(pair);
+      }
+      return li;
+    }));
+  }
+
+  /** Emparejar con otro PC de la red escribiendo su código (la petición va directamente a ese PC). */
+  async function pairOther(peer) {
+    const code = prompt(t('mOtherCode', { pc: peer.name }));
+    if (!code) return;
+    const base = `http://${peer.ip}:${peer.port}`;
+    try {
+      const r = await fetch(base + '/api/v1/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, name: guessName(), platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
+      });
+      if (!r.ok) throw new Error('bad_code');
+      const { token } = await r.json();
+      pcs[peer.id] = { id: peer.id, name: peer.name, base, token };
+      savePcs();
+      connect(pcs[peer.id]);
+      setTarget(peer.id);
+      renderPcList();
+    } catch {
+      alert(t('mCodeError'));
+    }
+  }
+
+  // ───────────── emparejar con este PC ─────────────
   function guessName() {
     if (/iPad/.test(ua)) return 'iPad';
     if (/iPhone/.test(ua)) return 'iPhone';
@@ -577,8 +800,8 @@
         body: JSON.stringify({ code, name, platform: isIOS ? 'ios' : isAndroid ? 'android' : 'web' }),
       });
       if (!r.ok) throw new Error('bad_code');
-      token = (await r.json()).token;
-      LS.set('nt-token', token);
+      HOME.token = (await r.json()).token;
+      LS.set('nt-token', HOME.token);
       await goHome();
     } catch {
       msg.textContent = t(errorKey);
@@ -595,7 +818,7 @@
       const r = await fetch(`http://${info.host}:${info.port}/api/v1/info`, { signal: ctrl.signal });
       clearTimeout(timer);
       if (!r.ok) return false;
-      location.replace(`http://${info.host}:${info.port}/?d=${encodeURIComponent(token)}`);
+      location.replace(`http://${info.host}:${info.port}/?d=${encodeURIComponent(HOME.token)}`);
       return true;
     } catch {
       return false;
@@ -603,22 +826,25 @@
   }
 
   async function goHome() {
-    const r = await api('/api/v1/me').catch(() => null);
+    const r = await call(HOME, '/api/v1/me').catch(() => null);
     if (r && r.status === 401) return unpaired();
     if (!r || !r.ok) {
       show('viewMain');
-      online = false;
+      online[pcKey(HOME)] = false;
       renderLcd();
       setTimeout(goHome, 4000);
       return;
     }
     me = await r.json();
+    HOME.id = me.pcId;
+    HOME.name = me.pcName;
+    if (pcs[HOME.id]) { delete pcs[HOME.id]; savePcs(); } // por si se emparejó también como «otro PC»
     if (await tryLocalHost(me)) return;
-    LS.set('nt-token', token);
+    LS.set('nt-token', HOME.token);
     // El token tiene que estar en la URL *al cargar* la página: así el servidor escribe el manifest con él
     // y el icono de la pantalla de inicio (que no comparte almacenamiento con Safari) arranca emparejado.
-    if (q.get('d') !== token) {
-      location.replace('/?d=' + encodeURIComponent(token));
+    if (q.get('d') !== HOME.token) {
+      location.replace('/?d=' + encodeURIComponent(HOME.token));
       return;
     }
     if (me.skins) { skins = me.skins; loadCustomSkins(); }
@@ -628,13 +854,20 @@
     $('pcInfo').textContent = `${me.pcName} · ${me.host}:${me.port} · v${me.version}`;
     $('installHint').hidden = standalone || !(isIOS || isAndroid) || LS.get('nt-hint-hidden') === '1';
     show('viewMain');
+    if (targetId && !pcs[targetId]) setTarget(null);
+    renderTargets();
     renderOutbox();
-    connectEvents();
+    renderHistory();
+    connectAll();
     renderLcd();
+    loadPeers();
   }
 
   // ───────────── menú ─────────────
-  $('btnMenu').onclick = () => ($('sheet').hidden = false);
+  $('btnMenu').onclick = () => {
+    $('sheet').hidden = false;
+    loadPeers();
+  };
   $('btnCloseSheet').onclick = () => ($('sheet').hidden = true);
   $('sheet').onclick = (e) => e.target === $('sheet') && ($('sheet').hidden = true);
   $('skinRow').onclick = (e) => {
@@ -677,12 +910,12 @@
   applySkin();
   applyI18n();
   (async () => {
-    if (token) {
-      const r = await api('/api/v1/me').catch(() => null);
+    if (HOME.token) {
+      const r = await call(HOME, '/api/v1/me').catch(() => null);
       if (r && r.ok) return goHome();
       if (r && r.status === 401) {
         LS.del('nt-token');
-        token = null;
+        HOME.token = null;
       } else if (!pairCode) {
         return goHome(); // PC apagado o sin red: se reintenta solo
       }

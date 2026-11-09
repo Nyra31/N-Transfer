@@ -59,8 +59,18 @@ async function upload(port, token, name, buf, { thumb, slow = false, mtime = 0 }
   return { id: s.id, done: put };
 }
 
+/** Captura con reintentos: si la ventana aún no se ha pintado, Chromium devuelve «UnknownVizError». */
 async function capture(w, file) {
-  fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
+  for (let i = 0; ; i++) {
+    try {
+      fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
+      return;
+    } catch (e) {
+      if (i >= 4) throw e;
+      w.show();
+      await wait(500);
+    }
+  }
 }
 
 module.exports = async function devshots({ app, win, server, store, send, viewer, settings }) {
@@ -213,6 +223,138 @@ module.exports = async function devshots({ app, win, server, store, send, viewer
     } else {
       check('subida grande desde el móvil (para pausa remota)', false, 'no apareció');
     }
+
+    // ── Varios PCs: un segundo servidor en la «red» al que el móvil se empareja desde el menú ──
+    const { Store } = require('../core/store');
+    const { TransferServer } = require('../core/server');
+    const P2 = port + 1;
+    const store2 = new Store(path.join(out, 'pc2', 'config.json'), {
+      port: P2, destDir: path.join(out, 'pc2', 'recv'), lang: 'es', skin: 'luna', pcName: 'Trabajo', devices: [], outbox: [], history: [],
+    });
+    const pc2 = new TransferServer({
+      store: store2, mobileDir: path.join(__dirname, '..', 'mobile'), sharedDir: path.join(__dirname, '..', 'shared'),
+      thumbsDir: path.join(out, 'pc2', 'thumbs'), version: 'test',
+    });
+    await pc2.start();
+    pc2.addTextToOutbox('Hola desde el PC del trabajo');
+    server.peers = () => [{ id: pc2.pcId, name: 'Trabajo', ip: '127.0.0.1', port: P2, host: 'trabajo.local', version: 'test' }];
+    await mobile.webContents.executeJavaScript(`(async () => {
+      window.prompt = () => ${JSON.stringify(pc2.pairCodeDisplay)};
+      document.getElementById('btnMenu').click();
+      for (let i = 0; i < 40 && !document.querySelector('#pcList button'); i++) await new Promise((r) => setTimeout(r, 100));
+      document.querySelector('#pcList button').click();
+    })()`);
+    await wait(1500);
+    await capture(mobile, path.join(out, 'mobile-menu-pcs.png'));
+    await mobile.webContents.executeJavaScript(`document.getElementById('btnCloseSheet').click()`);
+    const multi = await mobile.webContents.executeJavaScript(`({
+      target: document.getElementById('targetSel').selectedOptions[0]?.textContent,
+      visible: !document.getElementById('targetRow').hidden,
+      texts: [...document.querySelectorAll('#fromPc .text-body')].map((e) => e.textContent),
+    })`);
+    check('segundo PC emparejado y elegido como destino', multi.visible && /Trabajo/.test(multi.target || ''), JSON.stringify(multi));
+    check('el móvil ve lo que ofrece el segundo PC', multi.texts.includes('Hola desde el PC del trabajo'));
+    await mobile.webContents.executeJavaScript(`(() => {
+      const file = new File([new Uint8Array(300000)], 'para-trabajo.pdf', { type: 'application/pdf' });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const input = document.getElementById('pickFiles'); input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    })()`);
+    await wait(2000);
+    check('subida al segundo PC', fs.existsSync(path.join(out, 'pc2', 'recv', 'para-trabajo.pdf')));
+    await capture(mobile, path.join(out, 'mobile-multi-pc.png'));
+    await pc2.stop();
+
+    // ── Historial guardado en el móvil (sobrevive a recargar) ──
+    await mobile.reload();
+    await wait(2000);
+    const hist = await mobile.webContents.executeJavaScript(`[...document.querySelectorAll('#histList li:not(.day) .name')].map((e) => e.textContent)`);
+    check('historial del móvil tras recargar', hist.includes('IMG_0601.PNG') && hist.includes('para-trabajo.pdf') && hist.includes('Hola desde el móvil'), JSON.stringify(hist));
+
+    // ── Carpeta PC → móvil (ZIP) y «Enviar a → N-Transfer» (segunda copia con --send) ──
+    const folder = path.join(out, 'Vacaciones 2026');
+    fs.mkdirSync(path.join(folder, 'día 1'), { recursive: true });
+    for (const [i, jpg] of photos.entries()) fs.writeFileSync(path.join(folder, i ? 'día 1' : '', `foto${i}.jpg`), jpg);
+    const sendFile = path.join(out, 'received', 'Factura marzo.pdf');
+    server.removeFromOutbox(server.outbox().find((o) => o.name === 'Factura marzo.pdf')?.id);
+    const { spawn } = require('child_process');
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.NT_SHOTS;
+    const second = spawn(process.execPath, [app.getAppPath(), '--send', folder, sendFile], { env, stdio: 'ignore' });
+    await new Promise((r) => second.on('exit', r));
+    await wait(1500);
+    const ob = server.outbox();
+    check('«Enviar a»: la segunda copia pasa archivos y carpetas a la primera',
+      ob.some((o) => o.type === 'folder' && o.count === 3) && ob.some((o) => o.name === 'Factura marzo.pdf'), JSON.stringify(ob.map((o) => `${o.type}:${o.name}`)));
+    await wait(500);
+    await capture(win, path.join(out, 'pc-outbox-folder.png'));
+    // Volver a enviar a este PC (el destino seguía siendo el segundo PC)
+    await mobile.webContents.executeJavaScript(`(() => { const s = document.getElementById('targetSel'); s.value = ''; s.dispatchEvent(new Event('change')); window.scrollTo(0, 0); })()`);
+    await wait(500);
+    const zipRow = await mobile.webContents.executeJavaScript(`[...document.querySelectorAll('#fromPc li')].map((li) => li.textContent).find((x) => x.includes('Vacaciones'))`);
+    check('el móvil ofrece la carpeta como ZIP', /ZIP/.test(zipRow || '') && /3 archivos/.test(zipRow || ''), zipRow);
+
+    // ── Búsqueda, filtros y selección múltiple en el PC ──
+    send('show-tab', 'transfers');
+    await win.webContents.executeJavaScript(`document.querySelectorAll('.overlay').forEach((d) => (d.hidden = true))`);
+    await wait(300);
+    const found = await win.webContents.executeJavaScript(`(async () => {
+      const s = document.getElementById('search'); s.value = 'img_042'; s.dispatchEvent(new Event('input'));
+      await new Promise((r) => requestAnimationFrame(r));
+      const rows = document.querySelectorAll('#list li:not(.active)');
+      rows[0].click();
+      rows[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      await new Promise((r) => setTimeout(r, 100));
+      return { rows: rows.length, summary: document.getElementById('summary').textContent,
+               actions: [...document.querySelectorAll('#actions button')].map((b) => b.textContent) };
+    })()`);
+    check('búsqueda + selección múltiple', found.rows === 3 && /2 seleccionados/.test(found.summary) && found.actions.includes('Papelera'), JSON.stringify(found));
+    await capture(win, path.join(out, 'pc-search.png'));
+    await win.webContents.executeJavaScript(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+
+    // ── Asistente «No conecta» ──
+    send('open-diag');
+    await wait(9000); // las comprobaciones de firewall tardan unos segundos
+    const diag = await win.webContents.executeJavaScript(`[...document.querySelectorAll('#diagList li')].map((li) => li.className + ':' + li.textContent.slice(0, 60))`);
+    check('asistente «No conecta» con todas las comprobaciones', diag.length >= 6, JSON.stringify(diag));
+    await capture(win, path.join(out, 'pc-diag.png'));
+    await win.webContents.executeJavaScript(`document.getElementById('diagDlg').hidden = true`);
+
+    // ── Tamaño doble y osciloscopio ──
+    const w1 = win.getBounds().width;
+    await win.webContents.executeJavaScript(`window.nt.invoke('set', 'scale', 2)`);
+    await wait(800);
+    const w2 = win.getBounds().width;
+    check('tamaño doble', Math.abs(w2 - w1 * 2) <= 2 && win.webContents.getZoomFactor() === 2, `${w1} → ${w2}, zoom ${win.webContents.getZoomFactor()}`);
+    await win.webContents.executeJavaScript(`window.nt.invoke('set', 'scale', 1)`);
+    await wait(500);
+    await win.webContents.executeJavaScript(`document.getElementById('viz').click()`);
+    await wait(400);
+    check('visualizador en modo osciloscopio', store.get('vizMode') === 'scope');
+
+    // ── Editor de skins ──
+    send('open-settings', 'skins');
+    await wait(400);
+    await win.webContents.executeJavaScript(`(async () => {
+      document.getElementById('btnNewSkin').click();
+      await new Promise((r) => setTimeout(r, 200));
+      document.getElementById('edName').value = 'Atardecer';
+      const inputs = document.querySelectorAll('#editorGroups input[type=color]');
+      const set = (i, v) => { inputs[i].value = v; inputs[i].dispatchEvent(new Event('input')); };
+      set(0, '#ff8a3d'); set(1, '#5b1a3a'); set(6, '#1a0a12'); set(7, '#ffb347'); set(15, '#ff6a00'); set(16, '#ffd000');
+    })()`);
+    await wait(500);
+    await capture(win, path.join(out, 'pc-skin-editor.png'));
+    await win.webContents.executeJavaScript(`document.getElementById('btnEditorSave').click()`);
+    await wait(1500);
+    const saved = path.join(app.getPath('userData'), 'skins', 'atardecer.css');
+    check('editor de skins guarda la skin y la aplica', fs.existsSync(saved) && /@editor/.test(fs.readFileSync(saved, 'utf8')) && store.get('skin') === 'atardecer');
+    send('open-settings', 'general');
+    await win.webContents.executeJavaScript(`document.getElementById('settingsDlg').hidden = true`);
+    await wait(500);
+    await capture(win, path.join(out, 'pc-custom-saved.png'));
+    store.set('vizMode', 'bars');
 
     // ── Visor ──
     const photoEntry = server.history().find((h) => h.name === 'IMG_0422.JPG');

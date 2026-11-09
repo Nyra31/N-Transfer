@@ -34,7 +34,7 @@
         </div>
         <div class="marquee" id="marquee"></div>
         <div class="lcd-row bottom">
-          <canvas id="viz" width="150" height="30"></canvas>
+          <canvas id="viz" width="150" height="30" data-i18n-title="vizHint"></canvas>
           <button class="lcd-stats" id="lcdStats" data-i18n-title="clickToCycle"></button>
         </div>
       </div>
@@ -55,6 +55,17 @@
       <button class="nt-btn tab" data-tab="outbox" role="tab"><span data-i18n="tabOutbox"></span> <span class="badge" id="badgeOutbox"></span></button>
       <button class="nt-btn tab" data-tab="devices" role="tab"><span data-i18n="tabDevices"></span> <span class="badge" id="badgeDevices"></span></button>
     </nav>
+    <div class="filters" id="filters">
+      <input class="nt-input search" id="search" type="search" data-i18n-placeholder="search" spellcheck="false">
+      <span class="ftypes" id="ftypes">
+        <button class="nt-btn" data-f="all" data-i18n="filterAll"></button>
+        <button class="nt-btn" data-f="photo" data-i18n-title="photos">▣</button>
+        <button class="nt-btn" data-f="video" data-i18n-title="videos">▶</button>
+        <button class="nt-btn" data-f="other" data-i18n-title="others">■</button>
+        <button class="nt-btn" data-f="text" data-i18n-title="text">✉</button>
+      </span>
+      <select class="nt-select fdev" id="fDevice"></select>
+    </div>
     <div class="pl-body nt-inset">
       <ul class="nt-list" id="list" tabindex="0"></ul>
       <div class="empty" id="empty"></div>
@@ -84,6 +95,8 @@
       </div>
       <div class="pair-url" id="pairUrl"></div>
       <div class="dlg-actions">
+        <button class="nt-btn" id="btnPairDiag"><span data-i18n="noConnect"></span></button>
+        <span class="grow"></span>
         <button class="nt-btn" id="btnNewCode"><span data-i18n="pairNewCode"></span></button>
         <button class="nt-btn" data-close><span data-i18n="ok"></span></button>
       </div>
@@ -123,10 +136,16 @@
       </nav>
       <div class="prefs-page">
         <section data-page="general">
-          <fieldset class="nt-fieldset">
-            <legend data-i18n="language"></legend>
-            <select class="nt-select" id="setLang"><option value="es">Español</option><option value="en">English</option></select>
-          </fieldset>
+          <div class="two-col">
+            <fieldset class="nt-fieldset">
+              <legend data-i18n="language"></legend>
+              <select class="nt-select" id="setLang"><option value="es">Español</option><option value="en">English</option></select>
+            </fieldset>
+            <fieldset class="nt-fieldset">
+              <legend data-i18n="size"></legend>
+              <select class="nt-select" id="setScale"><option value="1">1×</option><option value="1.5">1,5×</option><option value="2">2×</option></select>
+            </fieldset>
+          </div>
           <fieldset class="nt-fieldset checks">
             <label class="nt-check"><input type="checkbox" id="setAutostart"><span data-i18n="autostart"></span></label>
             <label class="nt-check"><input type="checkbox" id="setTray"><span data-i18n="closeToTray"></span></label>
@@ -134,9 +153,15 @@
             <label class="nt-check"><input type="checkbox" id="setSounds"><span data-i18n="sounds"></span></label>
             <label class="nt-check"><input type="checkbox" id="setCopy"><span data-i18n="autoCopyText"></span></label>
           </fieldset>
-          <fieldset class="nt-fieldset">
+          <fieldset class="nt-fieldset net">
             <legend data-i18n="network"></legend>
+            <label data-i18n="pcNameLabel"></label>
+            <input class="nt-input" id="setPcName" maxlength="40" spellcheck="false">
+            <p class="note" data-i18n="pcNameHint"></p>
+            <label data-i18n="ipLabel"></label>
+            <select class="nt-select" id="setIp"></select>
             <div class="net-info" id="netInfo"></div>
+            <div class="row"><button class="nt-btn" id="btnPrefsDiag"><span data-i18n="noConnect"></span></button></div>
           </fieldset>
         </section>
 
@@ -176,8 +201,15 @@
             <legend data-i18n="customSkins"></legend>
             <div class="skin-picker" id="customPicker"></div>
             <p class="note" id="noCustom" data-i18n="noCustomSkins"></p>
+            <div class="row custom-actions" id="customActions">
+              <button class="nt-btn" id="btnEditSkin"><span data-i18n="editSkin"></span>…</button>
+              <button class="nt-btn" id="btnDeleteSkin"><span data-i18n="deleteSkin"></span></button>
+            </div>
             <p class="note" data-i18n="skinsHelp"></p>
-            <div class="row"><button class="nt-btn" id="btnSkinsFolder"><span data-i18n="skinsFolder"></span>…</button></div>
+            <div class="row">
+              <button class="nt-btn" id="btnNewSkin"><span data-i18n="newSkin"></span></button>
+              <button class="nt-btn" id="btnSkinsFolder"><span data-i18n="skinsFolder"></span>…</button>
+            </div>
           </fieldset>
         </section>
 
@@ -199,6 +231,38 @@
       </div>
     </div>
     <div class="dlg-actions pad"><button class="nt-btn" data-close><span data-i18n="ok"></span></button></div>
+  </div>
+</div>
+
+<!-- Asistente «No conecta» -->
+<div class="overlay" id="diagDlg" hidden>
+  <div class="dialog">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="diagTitle"></span><span class="stripes"></span>
+      <button class="nt-btn nt-tbtn danger" data-close>×</button></header>
+    <div class="dlg-body">
+      <ul class="diag-list" id="diagList"></ul>
+      <div class="dlg-actions">
+        <button class="nt-btn" id="btnDiagRun"><span data-i18n="diagRun"></span></button>
+        <span class="grow"></span>
+        <button class="nt-btn" data-close><span data-i18n="ok"></span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Editor de skins: el resto de la ventana hace de vista previa en directo -->
+<div class="overlay editor-overlay" id="editorDlg" hidden>
+  <div class="dialog editor">
+    <header class="nt-titlebar"><span class="stripes"></span><span data-i18n="skinEditor"></span><span class="stripes"></span>
+      <button class="nt-btn nt-tbtn danger" id="btnEditorX">×</button></header>
+    <div class="dlg-body">
+      <div class="row"><label data-i18n="skinName"></label><input class="nt-input grow" id="edName" maxlength="40"></div>
+      <div class="editor-groups" id="editorGroups"></div>
+      <div class="dlg-actions">
+        <button class="nt-btn" id="btnEditorCancel"><span data-i18n="cancel"></span></button>
+        <button class="nt-btn" id="btnEditorSave"><span data-i18n="save"></span></button>
+      </div>
+    </div>
   </div>
 </div>
 

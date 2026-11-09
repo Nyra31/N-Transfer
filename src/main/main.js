@@ -15,6 +15,8 @@ const autostart = require('./autostart');
 const { createSkinManager } = require('./custom-skins');
 const { makeThumbnail } = require('./thumbs');
 const { createViewer } = require('./viewer');
+const diagnostics = require('./diagnostics');
+const { getLanIPs } = require('../core/net');
 const i18n = require('../shared/i18n');
 
 const SRC = path.join(__dirname, '..');
@@ -27,7 +29,11 @@ if (process.env.NT_USER_DATA) app.setPath('userData', process.env.NT_USER_DATA);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => showWindow());
+  // Segunda copia (p. ej. «Enviar a → N-Transfer» con la app ya abierta): se reenvían sus archivos.
+  app.on('second-instance', (_e, argv) => {
+    showWindow();
+    handleSendArgs(argv);
+  });
   app.whenReady().then(init);
 }
 app.setAppUserModelId('com.nyra31.ntransfer');
@@ -68,6 +74,10 @@ async function init() {
     autoCopyText: true,
     alwaysOnTop: false,
     viewMode: 'normal',
+    scale: 1, // 1 · 1.5 · 2 (tamaño doble)
+    vizMode: 'bars', // bars · scope · off
+    pcName: '',
+    preferredIp: '',
     trayHintShown: false,
     devices: [],
     outbox: [],
@@ -92,11 +102,13 @@ async function init() {
     version: app.getVersion(),
     customSkins: () => skins.list(),
     thumbnailer: makeThumbnail,
+    peers: () => mdns.list(),
   });
   wireServerEvents();
   try {
     await server.start();
-    mdns.advertise({ name: os.hostname(), port: server.port, version: app.getVersion() });
+    mdns.advertise({ id: server.pcId, name: server.pcLabel, port: server.port, version: app.getVersion() });
+    mdns.browse(server.pcId, () => {});
   } catch (e) {
     serverError = e.code === 'EADDRINUSE' ? t('serverError', { port: server.port }) : e.message;
   }
@@ -112,21 +124,40 @@ async function init() {
   createWindow();
   createTray();
   setupUpdater();
+  handleSendArgs(process.argv);
 
   if (process.env.NT_SHOTS) require('./devshots')({ app, win, server, store, send, viewer, settings });
 }
 
+// ───────────── «Enviar a → N-Transfer» ─────────────
+/** Rutas que vienen detrás de --send (archivos o carpetas elegidos en el Explorador). */
+function handleSendArgs(argv) {
+  if (!argv.includes('--send') || !server) return;
+  // Chromium puede reordenar los argumentos (los «--algo» van primero), así que no basta con mirar lo que
+  // va detrás de --send: se toman todas las rutas que existen salvo el propio programa y la carpeta de la app.
+  const own = new Set([process.execPath, app.getAppPath(), path.resolve('.')].map((p) => path.resolve(p).toLowerCase()));
+  const paths = argv.slice(1).filter((p) => !p.startsWith('-') && fs.existsSync(p) && !own.has(path.resolve(p).toLowerCase()));
+  if (!paths.length) return;
+  server.addToOutbox(paths);
+  showWindow();
+  pendingTab = 'outbox'; // por si la interfaz aún no ha cargado
+  send('show-tab', 'outbox');
+}
+let pendingTab = null;
+
 // ───────────── ventana ─────────────
+const scale = () => store.get('scale') || 1;
+
 function createWindow() {
   const b = store.get('bounds') || {};
   fullHeight = b.height || 620;
   win = new BrowserWindow({
-    width: WIDTH,
+    width: b.width || Math.round(WIDTH * scale()),
     height: fullHeight,
     x: b.x,
     y: b.y,
-    minWidth: 420,
-    minHeight: 420,
+    minWidth: Math.round(420 * scale()),
+    minHeight: Math.round(420 * scale()),
     frame: false,
     resizable: true,
     maximizable: false,
@@ -146,6 +177,7 @@ function createWindow() {
   });
   win.setMenu(null);
   win.loadFile(path.join(SRC, 'renderer', 'index.html'));
+  win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(scale()));
 
   const startHidden = process.argv.includes('--hidden') || process.env.NT_SHOTS;
   win.once('ready-to-show', () => !startHidden && win.show());
@@ -186,23 +218,45 @@ function showWindow() {
   win.focus();
 }
 
-/** normal: ventana completa · shade: título + LCD · mini: LCD diminuta. */
+/**
+ * normal: ventana completa · shade: título + LCD · mini: LCD diminuta.
+ * `height` llega en píxeles CSS desde la interfaz; aquí se multiplica por el tamaño (1x, 1.5x, 2x).
+ */
 function setViewMode(mode, height) {
+  const s = scale();
   const { width } = win.getBounds();
   if (viewMode === 'normal' && mode !== 'normal') store.set('normalWidth', width);
   viewMode = mode;
   store.set('viewMode', mode);
   if (mode === 'normal') {
     win.setResizable(true);
-    win.setMinimumSize(420, 420);
-    win.setSize(store.get('normalWidth') || WIDTH, fullHeight);
+    win.setMinimumSize(Math.round(420 * s), Math.round(420 * s));
+    win.setSize(store.get('normalWidth') || Math.round(WIDTH * s), fullHeight);
   } else {
-    const w = mode === 'mini' ? MINI_WIDTH : width;
+    const h = Math.round(height * s);
+    const w = mode === 'mini' ? Math.round(MINI_WIDTH * s) : width;
     win.setResizable(true);
-    win.setMinimumSize(mode === 'mini' ? MINI_WIDTH : 420, height);
-    win.setSize(w, height);
+    win.setMinimumSize(mode === 'mini' ? w : Math.round(420 * s), h);
+    win.setSize(w, h);
     win.setResizable(false);
   }
+}
+
+/** Tamaño doble (o 1,5x): zoom de la interfaz y ventana proporcional. */
+function setScale(next) {
+  const prev = scale();
+  if (![1, 1.5, 2].includes(next) || next === prev) return;
+  store.set('scale', next);
+  const k = next / prev;
+  fullHeight = Math.round(fullHeight * k);
+  if (store.get('normalWidth')) store.set('normalWidth', Math.round(store.get('normalWidth') * k));
+  win.webContents.setZoomFactor(next);
+  if (viewMode === 'normal') {
+    const { width, height } = win.getBounds();
+    win.setMinimumSize(Math.round(420 * next), Math.round(420 * next));
+    win.setSize(Math.round(width * k), Math.round(height * k));
+  }
+  send('settings', settings()); // la interfaz recalcula el modo plegado/mini con el nuevo tamaño
 }
 
 function setAlwaysOnTop(on) {
@@ -292,6 +346,7 @@ function wireServerEvents() {
     }
   });
   server.on('stats-changed', (s) => send('stats', s));
+  server.on('lan-contact', (c) => send('lan-contact', c));
   server.on('devices-changed', (d) => send('devices', d));
   server.on('outbox-changed', (o) => send('outbox', o));
   server.on('history-changed', (h) => send('history', h));
@@ -339,6 +394,12 @@ function settings() {
     autoCopyText: store.get('autoCopyText'),
     alwaysOnTop: store.get('alwaysOnTop'),
     viewMode: store.get('viewMode'),
+    scale: scale(),
+    vizMode: store.get('vizMode'),
+    pcName: store.get('pcName'),
+    pcLabel: server.pcLabel,
+    preferredIp: store.get('preferredIp'),
+    ips: getLanIPs(),
     autostart: autostart.get(),
     port: store.get('port'),
   };
@@ -354,8 +415,13 @@ ipcMain.handle('state', async () => ({
   pair: await pairInfo(),
   devices: server.devices(),
   outbox: server.outbox(),
-  history: server.history().slice(0, 200),
+  history: server.history(),
   active: server.activeTransfers(),
+  startTab: (() => {
+    const tab = pendingTab;
+    pendingTab = null;
+    return tab;
+  })(),
   stats: server.stats(),
   customSkins: customSkins(),
   thumbBase: pathToFileURL(thumbsDir()).href + '/',
@@ -373,6 +439,86 @@ ipcMain.handle('set', (_e, key, value) => {
   else if (BOOL_SETTINGS.has(key)) applySetting(key, !!value);
   else if (key === 'autostart') setAutostart(!!value);
   else if (key === 'alwaysOnTop') setAlwaysOnTop(!!value);
+  else if (key === 'scale') setScale(Number(value));
+  else if (key === 'vizMode' && ['bars', 'scope', 'off'].includes(value)) applySetting('vizMode', value);
+  else if (key === 'preferredIp' && (value === '' || getLanIPs().includes(value))) {
+    store.set('preferredIp', value);
+    send('settings', settings());
+    pairInfo().then((p) => send('pair', p));
+  } else if (key === 'pcName') {
+    store.set('pcName', String(value || '').trim().slice(0, 40));
+    // Se vuelve a anunciar en la red con el nombre nuevo
+    mdns.stop();
+    mdns.advertise({ id: server.pcId, name: server.pcLabel, port: server.port, version: app.getVersion() });
+    mdns.browse(server.pcId, () => {});
+    send('settings', settings());
+  }
+});
+
+// ───────────── varias entradas del historial a la vez ─────────────
+ipcMain.handle('entries', async (_e, action, ids) => {
+  const entries = server.history().filter((h) => ids.includes(h.id));
+  const withFile = entries.filter((h) => h.path && h.kind !== 'text' && fs.existsSync(h.path));
+  if (action === 'open') {
+    const media = withFile.filter((h) => h.kind === 'photo' || h.kind === 'video');
+    if (media.length) viewer.open(media[0].id);
+    for (const h of withFile.filter((x) => !media.includes(x)).slice(0, 10)) shell.openPath(h.path);
+  } else if (action === 'show') {
+    if (withFile[0]) shell.showItemInFolder(withFile[0].path);
+  } else if (action === 'remove') {
+    server.removeHistory(ids);
+  } else if (action === 'trash') {
+    // Solo lo recibido (lo enviado al móvil sigue siendo un archivo tuyo del PC)
+    const received = withFile.filter((h) => h.direction === 'in');
+    if (!received.length) return;
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: [t('trashConfirmYes'), t('cancel')], defaultId: 1, cancelId: 1,
+      title: 'N-Transfer', message: t('trashConfirm', { n: received.length }),
+    });
+    if (response !== 0) return;
+    for (const h of received) {
+      await shell.trashItem(h.path).catch(() => {});
+      if (h.extra?.path) await shell.trashItem(h.extra.path).catch(() => {});
+    }
+    server.removeHistory(received.map((h) => h.id));
+  }
+});
+
+// Arrastrar desde la lista a otra carpeta o aplicación
+ipcMain.on('drag-out', (e, ids) => {
+  const files = server.history()
+    .filter((h) => Array.isArray(ids) && ids.includes(h.id) && h.path && h.kind !== 'text' && fs.existsSync(h.path));
+  if (!files.length) return;
+  let icon = files[0].thumb ? nativeImage.createFromPath(path.join(thumbsDir(), files[0].thumb)) : null;
+  if (!icon || icon.isEmpty()) icon = nativeImage.createFromPath(ICON);
+  icon = icon.resize({ width: 64 });
+  e.sender.startDrag({ file: files[0].path, files: files.map((h) => h.path), icon });
+});
+
+// ───────────── asistente «No conecta» ─────────────
+ipcMain.handle('diagnostics', () => diagnostics.runChecks({ server, serverError, exePath: process.execPath }));
+ipcMain.handle('firewall-add', () => diagnostics.addFirewallRule(process.execPath));
+ipcMain.handle('open-network-settings', () => process.platform === 'win32' && shell.openExternal('ms-settings:network-status'));
+
+// ───────────── editor de skins ─────────────
+ipcMain.handle('skin-save', (_e, { id, name, css }) => {
+  const clean = String(name || '').trim().slice(0, 40) || 'Mi skin';
+  const slug = id && /^[a-z0-9-]+$/.test(id) ? id
+    : clean.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skin';
+  let finalId = slug;
+  if (!id) for (let n = 2; skins.has(finalId); n++) finalId = `${slug}-${n}`;
+  fs.mkdirSync(skins.dir, { recursive: true });
+  fs.writeFileSync(path.join(skins.dir, `${finalId}.css`), String(css).replace(/\.skin-__ID__/g, `.skin-${finalId}`));
+  skins.rescan();
+  applySetting('skin', finalId);
+  return finalId;
+});
+ipcMain.handle('skin-delete', async (_e, id) => {
+  const skin = skins.list().find((s) => s.id === id);
+  if (!skin) return;
+  await shell.trashItem(skin.file).catch(() => fs.rmSync(skin.file, { force: true }));
+  if (store.get('skin') === id) store.set('skin', 'winamp');
+  skins.rescan();
 });
 
 /** Elegir carpeta: destino general (key = destDir) o por tipo (photoDir, videoDir, otherDir). */
@@ -394,6 +540,10 @@ ipcMain.handle('reset-folder', (_e, key) => {
 ipcMain.handle('outbox-add', (_e, paths) => server.addToOutbox((paths || []).filter((p) => typeof p === 'string')));
 ipcMain.handle('outbox-pick', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] });
+  if (!r.canceled) await server.addToOutbox(r.filePaths);
+});
+ipcMain.handle('outbox-pick-folder', async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'multiSelections'] });
   if (!r.canceled) await server.addToOutbox(r.filePaths);
 });
 ipcMain.handle('outbox-text', (_e, text) => server.addTextToOutbox(text));
@@ -455,6 +605,7 @@ ipcMain.handle('main-menu', () => {
   const skinItem = ([id, label]) => ({ label, type: 'radio', checked: store.get('skin') === id, click: () => applySetting('skin', id) });
   Menu.buildFromTemplate([
     { label: t('pair'), click: () => send('open-pair') },
+    { label: t('noConnect') + '…', click: () => send('open-diag') },
     { label: t('sendText') + '…', click: () => send('open-text') },
     { label: t('settings') + '…', click: () => send('open-settings') },
     { type: 'separator' },
@@ -475,6 +626,7 @@ ipcMain.handle('main-menu', () => {
     },
     { type: 'separator' },
     { label: t('miniMode'), type: 'checkbox', checked: viewMode === 'mini', click: () => send('toggle-mini') },
+    { label: t('doubleSize'), type: 'checkbox', accelerator: 'CmdOrCtrl+D', checked: scale() === 2, click: () => setScale(scale() === 2 ? 1 : 2) },
     { label: t('alwaysOnTop'), type: 'checkbox', checked: store.get('alwaysOnTop'), click: (i) => setAlwaysOnTop(i.checked) },
     { label: t('sounds'), type: 'checkbox', checked: store.get('sounds'), click: (i) => applySetting('sounds', i.checked) },
     { type: 'separator' },

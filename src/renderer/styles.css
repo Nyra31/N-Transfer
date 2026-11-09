@@ -86,6 +86,7 @@ body { background: var(--frame-bg); font-size: 12px; user-select: none; }
 body.shaded .playlist, body.shaded .controls, body.shaded .seek { display: none; }
 
 /* ── Modo mini: una LCD diminuta ── */
+body.shaded .filters, body.mini .filters,
 body.mini .playlist, body.mini .controls, body.mini .hide-mini, body.mini .main-title .stripes { display: none; }
 body.mini .main-title { height: 18px; font-size: 9px; }
 body.mini .main-title .title { flex: 1; }
@@ -160,6 +161,50 @@ body.mini .seek { display: block; height: 5px; }
 .stats-table td:last-child { text-align: right; font-family: var(--font-lcd); }
 .about-box { display: flex; gap: 14px; align-items: center; line-height: 1.6; padding: 8px; }
 .about-box a { color: inherit; }
+
+/* ── Búsqueda y filtros del historial ── */
+.filters { display: flex; gap: 4px; align-items: center; }
+.filters[hidden] { display: none; }
+.filters .search { flex: 1; min-width: 0; height: 24px; font-size: 12px; }
+.ftypes { display: flex; gap: 2px; }
+.ftypes .nt-btn { min-height: 24px; height: 24px; padding: 0 7px; font-size: 11px; }
+.ftypes .nt-btn.active { background: var(--btn-press); box-shadow: inset 1px 1px 3px rgba(0,0,0,.5); font-weight: bold; }
+.fdev { width: auto; max-width: 110px; height: 24px; padding: 1px 4px; font-size: 11px; }
+#list li[draggable="true"] { cursor: grab; }
+#viz { cursor: pointer; }
+
+/* ── Preferencias: red ── */
+.net { display: flex; flex-direction: column; gap: 4px; }
+.net label { font-size: 11px; margin-top: 4px; }
+.net .note { margin: 0 0 2px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.custom-actions { margin-top: 6px; }
+.custom-actions[hidden] { display: none; }
+
+/* ── Asistente «No conecta» ── */
+.diag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.diag-list li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; line-height: 1.45; user-select: text; }
+.diag-list .mark {
+  width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;
+  border: 1px solid var(--frame-lo); color: #fff; text-shadow: none;
+}
+.diag-list .ok .mark { background: #1e9a2c; }
+.diag-list .warn .mark { background: #d98a00; }
+.diag-list .error .mark { background: #c8231b; }
+.diag-list .info .mark { background: #4a6fa8; }
+.diag-list .acts { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.diag-list .acts .nt-btn { min-height: 22px; font-size: 11px; padding: 2px 10px; }
+.diag-list code { font-family: var(--font-lcd); font-size: 11px; word-break: break-all; }
+
+/* ── Editor de skins: se queda abajo para ver la ventana cambiar arriba ── */
+.editor-overlay { background: transparent; align-items: flex-end; padding: 6px; pointer-events: none; }
+.editor-overlay .dialog { pointer-events: auto; max-width: none; max-height: 58%; }
+.editor .dlg-body { gap: 8px; padding: 8px 10px 10px; }
+.editor .row { display: flex; gap: 8px; align-items: center; }
+.editor-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; overflow: auto; }
+.editor-groups .nt-fieldset { padding: 4px 8px 6px; }
+.editor-groups .color-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; margin-top: 3px; }
+.editor-groups input[type=color] { width: 34px; height: 20px; padding: 0; border: 1px solid var(--frame-lo); background: none; cursor: pointer; }
 
 /* ── Soltar archivos ── */
 .drop {
