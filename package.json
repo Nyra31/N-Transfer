@@ -1,7 +1,7 @@
 {
   "name": "n-transfer",
   "productName": "N-Transfer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pasa fotos, vídeos y archivos entre tu móvil y tu PC por Wi-Fi, con skins al estilo de los 2000",
   "main": "src/main/main.js",
   "author": {
